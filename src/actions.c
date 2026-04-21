@@ -66,3 +66,72 @@ void action_start_shutdown(void) {
 void action_send_test_result(void) {
 }
 
+void action_finish_erase(void) {
+}
+
+void action_finish_erase_alarm(void) {
+}
+
+void action_update_nand_state(void) {
+}
+
+void action_clear_nand_full_flag(void) {
+}
+
+void action_update_service_data(void) {
+}
+
+void action_finish_test(void) {
+}
+
+void action_finish_test_alarm(void) {
+}
+
+void action_update_test_results(void) {
+}
+
+void action_observe_periodic(void) {
+}
+
+void action_handle_ped_trigger(void) {
+}
+
+void action_update_observe_config(void) {
+}
+
+void action_accept_time_sync(void) {
+}
+
+void action_accept_orbit(void) {
+}
+
+void action_accept_attitude(void) {
+}
+
+void action_accept_magfield(void) {
+}
+
+void action_finish_observe_full(void) {
+}
+
+void action_finish_observe(void) {
+}
+
+void action_finish_observe_alarm(void) {
+}
+
+void action_finish_dump(void) {
+}
+
+void action_finish_dump_alarm(void) {
+}
+
+void action_fix_dump_results(void) {
+}
+
+void action_clear_alarm_status(void) {
+}
+
+void action_mark_alarm_exit(void) {
+}
+

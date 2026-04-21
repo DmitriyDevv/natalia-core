@@ -1,11 +1,6 @@
-//
-// Created by DmitriyDevv on 14.04.2026.
-//
-
 #ifndef NATALIA_CORE_STATE_H
 #define NATALIA_CORE_STATE_H
 
-#include <stdbool.h>
 #include <stdint.h>
 
 typedef enum {

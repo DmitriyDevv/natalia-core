@@ -1,6 +1,8 @@
 #include <assert.h>
 #include <stdio.h>
+#include <stdbool.h>
 
+#include "observe.h"
 #include "state.h"
 
 
@@ -58,10 +60,30 @@ static void print_state(SystemContext *ctx) {
     printf("state: %s\n", state_to_string(ctx->state));
 }
 
+static volatile bool rtc_1hz_pending = false;
+
 int main(void) {
     init_done_to_duty();
     init_done_to_alarm();
     init_fail_to_alarm();
+
+    SystemContext ctx = {
+        .state = STATE_OBSERVE,
+        .alarm_status = 0U,
+        .masked_alarm = 0U
+    };
+
+    rtc_1hz_pending = true;
+
+    if (rtc_1hz_pending) {
+        rtc_1hz_pending = false;
+
+        if (ctx.state == STATE_OBSERVE) {
+            observe_on_rtc_1hz(&ctx);
+        }
+    }
+
+
     return 0;
 }
 

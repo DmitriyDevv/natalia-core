@@ -7,6 +7,10 @@ add_executable(natalia_core main.c
         include/state.h
         src/state.c
         include/actions.h
-        src/actions.c)
+        src/actions.c
+        src/observe.c
+        include/observe.h
+        src/transport.c
+        include/transport.h)
 
 target_include_directories(natalia_core PRIVATE include)
