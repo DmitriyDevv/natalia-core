@@ -8,6 +8,8 @@ add_executable(natalia_core main.c
         src/state.c
         include/actions.h
         src/actions.c
+        include/board_api.h
+        src/board_api_stub.c
         src/observe.c
         include/observe.h
         src/transport.c

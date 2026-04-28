@@ -1,24 +1,9 @@
 #include <assert.h>
-#include <stdio.h>
 #include <stdbool.h>
 
 #include "observe.h"
 #include "state.h"
 
-
-static const char *state_to_string(SystemState state) {
-    switch (state) {
-        case STATE_INIT: return "INIT";
-        case STATE_DUTY: return "DUTY";
-        case STATE_ERASE: return "ERASE";
-        case STATE_TEST: return "TEST";
-        case STATE_OBSERVE: return "OBSERVE";
-        case STATE_DUMP: return "DUMP";
-        case STATE_ALARM: return "ALARM";
-        case STATE_SHUTDOWN: return "SHUTDOWN";
-        default: return "UNKNOWN";
-    }
-}
 
 static void init_done_to_duty(void) {
     SystemContext ctx = {
@@ -56,10 +41,6 @@ static void init_fail_to_alarm(void) {
     assert(ctx.state == STATE_ALARM);
 }
 
-static void print_state(SystemContext *ctx) {
-    printf("state: %s\n", state_to_string(ctx->state));
-}
-
 static volatile bool rtc_1hz_pending = false;
 
 int main(void) {
@@ -86,5 +67,4 @@ int main(void) {
 
     return 0;
 }
-
 
