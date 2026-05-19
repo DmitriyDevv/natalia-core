@@ -8,6 +8,8 @@ add_executable(natalia_core main.c
         src/state.c
         include/actions.h
         src/actions.c
+        include/mram_store.h
+        src/mram_store.c
         include/board_api.h
         src/board_api_stub.c
         src/observe.c
