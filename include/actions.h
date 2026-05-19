@@ -1,94 +1,104 @@
 #ifndef NATALIA_CORE_ACTION_H
 #define NATALIA_CORE_ACTION_H
 
-void action_init_hardware(void);
+#include "board_api.h"
+#include "state.h"
 
-void action_load_mram(void);
+typedef enum {
+    ACTION_OK = 0,
+    ACTION_ERR_CONTENT,
+    ACTION_ERR_OTHER,
+    ACTION_ALARM
+} ActionResult;
 
-void action_check_mram(void);
+ActionResult action_init_hardware(void);
 
-void action_restore_mram_copy(void);
+ActionResult action_load_mram(SystemContext *ctx);
 
-void action_mark_init_done(void);
+ActionResult action_check_mram(SystemContext *ctx);
 
-void action_mark_init_fail(void);
+ActionResult action_restore_mram_copy(SystemContext *ctx);
 
-void action_mark_alarm(void);
+ActionResult action_mark_init_done(SystemContext *ctx);
 
-void action_enter_safe_config(void);
+ActionResult action_mark_init_fail(SystemContext *ctx);
 
-void action_send_status(void);
+ActionResult action_mark_alarm(SystemContext *ctx);
 
-void action_send_ack(void);
+ActionResult action_enter_safe_config(SystemContext *ctx);
 
-void action_send_ack_error(void);
+ActionResult action_send_status(const SystemContext *ctx);
 
-void action_send_telem(void);
+ActionResult action_send_ack(const SystemEvent *event);
 
-void action_set_time(void);
+ActionResult action_send_ack_status(const SystemEvent *event, BoardAckStatus status);
 
-void action_apply_config(void);
+ActionResult action_send_telem(void);
 
-void action_write_mram(void);
+ActionResult action_set_time(const SystemEvent *event);
 
-void action_recalc_masked_alarm(void);
+ActionResult action_apply_config(SystemContext *ctx, const SystemEvent *event);
 
-void action_start_observe(void);
+ActionResult action_write_mram(const SystemContext *ctx);
 
-void action_start_erase(void);
+ActionResult action_recalc_masked_alarm(SystemContext *ctx);
 
-void action_start_test(void);
+ActionResult action_start_observe(SystemContext *ctx, const SystemEvent *event);
 
-void action_start_dump(void);
+ActionResult action_start_erase(SystemContext *ctx, const SystemEvent *event);
 
-void action_start_shutdown(void);
+ActionResult action_start_test(SystemContext *ctx, const SystemEvent *event);
 
-void action_send_test_result(void);
+ActionResult action_start_dump(SystemContext *ctx, const SystemEvent *event);
 
-void action_finish_erase(void);
+ActionResult action_start_shutdown(SystemContext *ctx);
 
-void action_finish_erase_alarm(void);
+ActionResult action_send_test_result(void);
 
-void action_update_nand_state(void);
+ActionResult action_finish_erase(SystemContext *ctx, const SystemEvent *event);
 
-void action_clear_nand_full_flag(void);
+ActionResult action_finish_erase_alarm(SystemContext *ctx);
 
-void action_update_service_data(void);
+ActionResult action_update_nand_state(SystemContext *ctx);
 
-void action_finish_test(void);
+ActionResult action_clear_nand_full_flag(SystemContext *ctx);
 
-void action_finish_test_alarm(void);
+ActionResult action_update_service_data(const SystemContext *ctx);
 
-void action_update_test_results(void);
+ActionResult action_finish_test(SystemContext *ctx, const SystemEvent *event);
 
-void action_observe_periodic(void);
+ActionResult action_finish_test_alarm(SystemContext *ctx);
 
-void action_handle_ped_trigger(void);
+ActionResult action_update_test_results(SystemContext *ctx);
 
-void action_update_observe_config(void);
+ActionResult action_observe_periodic(SystemContext *ctx);
 
-void action_accept_time_sync(void);
+ActionResult action_handle_ped_trigger(SystemContext *ctx);
 
-void action_accept_orbit(void);
+ActionResult action_update_observe_config(SystemContext *ctx, const SystemEvent *event);
 
-void action_accept_attitude(void);
+ActionResult action_accept_time_sync(SystemContext *ctx, const SystemEvent *event);
 
-void action_accept_magfield(void);
+ActionResult action_accept_orbit(SystemContext *ctx, const SystemEvent *event);
 
-void action_finish_observe_full(void);
+ActionResult action_accept_attitude(SystemContext *ctx, const SystemEvent *event);
 
-void action_finish_observe(void);
+ActionResult action_accept_magfield(SystemContext *ctx, const SystemEvent *event);
 
-void action_finish_observe_alarm(void);
+ActionResult action_finish_observe_full(SystemContext *ctx);
 
-void action_finish_dump(void);
+ActionResult action_finish_observe(SystemContext *ctx, const SystemEvent *event);
 
-void action_finish_dump_alarm(void);
+ActionResult action_finish_observe_alarm(SystemContext *ctx);
 
-void action_fix_dump_results(void);
+ActionResult action_finish_dump(SystemContext *ctx, const SystemEvent *event);
 
-void action_clear_alarm_status(void);
+ActionResult action_finish_dump_alarm(SystemContext *ctx);
 
-void action_mark_alarm_exit(void);
+ActionResult action_fix_dump_results(SystemContext *ctx);
+
+ActionResult action_clear_alarm_status(SystemContext *ctx);
+
+ActionResult action_mark_alarm_exit(SystemContext *ctx);
 
 #endif //NATALIA_CORE_ACTION_H
