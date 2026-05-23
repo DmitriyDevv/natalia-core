@@ -1,106 +1,82 @@
-#include <assert.h>
-#include <stdbool.h>
-
-#include "observe.h"
+#include "board_api.h"
+#include "can1.h"
+#include "clock.h"
+#include "debug_log.h"
+#include "instrument_time.h"
 #include "state.h"
-
-
-static void init_done_to_duty(void) {
-    SystemContext ctx = {
-        .state = STATE_INIT,
-        .alarm_status = 0U,
-        .masked_alarm = 0U
-    };
-    const SystemEvent event = {
-        .type = EVENT_INIT_DONE,
-        .msg_id = 0U
-    };
-
-    handle_event(&ctx, &event);
-
-    assert(ctx.state == STATE_DUTY);
-    assert(ctx.previous_state == STATE_INIT);
-}
-
-static void init_done_to_alarm(void) {
-    SystemContext ctx = {
-        .state = STATE_INIT,
-        .alarm_status = 0U,
-        .masked_alarm = 1U
-    };
-    const SystemEvent event = {
-        .type = EVENT_INIT_DONE,
-        .msg_id = 0U
-    };
-
-    handle_event(&ctx, &event);
-
-    assert(ctx.state == STATE_ALARM);
-}
-
-static void init_fail_to_alarm(void) {
-    SystemContext ctx = {
-        .state = STATE_INIT,
-        .alarm_status = 0U,
-        .masked_alarm = 0U
-    };
-    const SystemEvent event = {
-        .type = EVENT_INIT_FAIL,
-        .msg_id = 0U
-    };
-
-    handle_event(&ctx, &event);
-
-    assert(ctx.state == STATE_ALARM);
-}
-
-static void duty_start_erase_with_payload(void) {
-    SystemContext ctx = {
-        .state = STATE_DUTY,
-        .alarm_status = 0U,
-        .masked_alarm = 0U
-    };
-    const SystemEvent event = {
-        .type = EVENT_CMD_ERASE,
-        .msg_id = 107U,
-        .command.erase = {
-            .bank = NAND_BANK_1,
-            .power_after_done = POWER_AFTER_DONE_OFF
-        }
-    };
-
-    handle_event(&ctx, &event);
-
-    assert(ctx.state == STATE_ERASE);
-    assert(ctx.previous_state == STATE_DUTY);
-    assert(ctx.erase.bank == NAND_BANK_1);
-    assert(ctx.erase.stage == ERASE_STAGE_WAIT);
-}
-
-static volatile bool rtc_1hz_pending = false;
+#include "status.h"
+#include "timebase.h"
+#include "transport.h"
+#include "unican.h"
 
 int main(void) {
-    init_done_to_duty();
-    init_done_to_alarm();
-    init_fail_to_alarm();
-    duty_start_erase_with_payload();
+    BoardStatus status;
+    InstrumentTime current_time;
+    uint32_t last_print_ms;
 
     SystemContext ctx = {
-        .state = STATE_OBSERVE,
+        .state = STATE_DUTY,
+        .previous_state = STATE_INIT,
         .alarm_status = 0U,
+        .alarm_mask = 0U,
         .masked_alarm = 0U
     };
 
-    rtc_1hz_pending = true;
-
-    if (rtc_1hz_pending) {
-        rtc_1hz_pending = false;
-
-        if (ctx.state == STATE_OBSERVE) {
-            observe_on_rtc_1hz(&ctx);
-        }
+    status = debug_log_init();
+    if (status != BOARD_OK) {
+        while (1) {}
     }
 
+    status = clock_init();
+    if (status != BOARD_OK) {
+        debug_log_write_u32("clock_init error = ", (uint32_t)status);
+        while (1) {}
+    }
 
-    return 0;
+    status = timebase_init();
+    if (status != BOARD_OK) {
+        debug_log_write_u32("timebase_init error = ", (uint32_t)status);
+        while (1) {}
+    }
+
+    status = board_init_hardware();
+    if (status != BOARD_OK) {
+        debug_log_write_u32("board_init_hardware error = ", (uint32_t)status);
+        while (1) {}
+    }
+
+    status = can1_init();
+    if (status != BOARD_OK) {
+        debug_log_write_u32("can1_init error = ", (uint32_t)status);
+        while (1) {}
+    }
+
+    unican_init();
+
+    last_print_ms = timebase_millis();
+
+    while (1) {
+        status = transport_poll(&ctx, timebase_millis());
+
+        if (status != BOARD_OK) {
+            debug_log_write_u32("transport_poll error = ",
+                                (uint32_t)status);
+        }
+
+        if (timebase_elapsed(last_print_ms, 1000U)) {
+            last_print_ms = timebase_millis();
+
+            status = board_rtc_get_time(&current_time);
+
+            if (status == BOARD_OK) {
+                debug_log_write_u32("RTC seconds = ",
+                                    current_time.seconds);
+                debug_log_write_u32("RTC milliseconds = ",
+                                    (uint32_t)current_time.milliseconds);
+            } else {
+                debug_log_write_u32("RTC read error = ",
+                                    (uint32_t)status);
+            }
+        }
+    }
 }

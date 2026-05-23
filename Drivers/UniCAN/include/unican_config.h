@@ -1,0 +1,15 @@
+#ifndef UNICAN_CONFIG_H
+#define UNICAN_CONFIG_H
+
+#define UNICAN_RX_BUFFERS_COUNT         (3U)
+#define UNICAN_MESSAGE_SLOTS_COUNT      (8U)
+#define UNICAN_MAX_MESSAGE_DATA         (6144U)
+
+#define UNICAN_LONG_MESSAGE_TIMEOUT_MS  (1000UL)
+#define UNICAN_TX_FRAME_TIMEOUT_MS      (1000UL)
+
+#define UNICAN_SHORT_MESSAGE_MAX_DATA   (6U)
+#define UNICAN_CRC_LENGTH               (2U)
+
+
+#endif /* UNICAN_CONFIG_H */
