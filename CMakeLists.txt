@@ -12,6 +12,9 @@ add_executable(natalia_core main.c
         src/mram_store.c
         include/board_api.h
         src/board_api_stub.c
+        src/algorithm.c
+        include/algorithm.h
+        include/test_mode_config.h
         src/observe.c
         include/observe.h
         src/transport.c

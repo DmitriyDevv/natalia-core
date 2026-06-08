@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "test_mode_config.h"
+
 typedef enum {
     STATE_INIT,
     STATE_DUTY,
@@ -206,8 +208,16 @@ typedef struct {
     PowerAfterDone power_after_done;
     TestStage stage;
     uint32_t test_mask;
+    uint32_t current_address;
+    uint32_t block_index;
     uint32_t result_status;
+    uint32_t total_errors;
+    uint32_t failed_address;
+    uint16_t nerr[TEST_MODE_BLOCK_COUNT];
+    uint8_t write_buffer[TEST_MODE_BLOCK_SIZE];
+    uint8_t read_buffer[TEST_MODE_BLOCK_SIZE];
     bool result_valid;
+    bool operation_failed;
     bool finish_requested;
     SystemState finish_target_state;
 } TestContext;

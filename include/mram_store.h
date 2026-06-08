@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "board_api.h"
+#include "test_mode_config.h"
 
 #define MRAM_STORE_ALARM_BOTH_COPIES_INVALID (1UL << 0)
 
@@ -22,7 +23,9 @@ typedef struct {
 typedef struct {
     uint8_t bank;
     uint32_t status;
+    uint32_t total_errors;
     uint32_t failed_address;
+    uint16_t nerr[TEST_MODE_BLOCK_COUNT];
 } MramStoreTestResult;
 
 typedef struct {

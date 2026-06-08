@@ -1,6 +1,8 @@
 #include <assert.h>
 #include <stdbool.h>
+#include <stddef.h>
 
+#include "algorithm.h"
 #include "observe.h"
 #include "state.h"
 
@@ -77,6 +79,39 @@ static void duty_start_erase_with_payload(void) {
     assert(ctx.erase.stage == ERASE_STAGE_WAIT);
 }
 
+static void duty_start_test_runs_to_done(void) {
+    SystemContext ctx = {
+        .state = STATE_DUTY,
+        .alarm_status = 0U,
+        .masked_alarm = 0U
+    };
+    const SystemEvent event = {
+        .type = EVENT_CMD_TEST,
+        .msg_id = 108U,
+        .command.test = {
+            .bank = NAND_BANK_1,
+            .power_after_done = POWER_AFTER_DONE_OFF,
+            .test_mask = 0x5AU
+        }
+    };
+
+    handle_event(&ctx, &event);
+
+    assert(ctx.state == STATE_TEST);
+    assert(ctx.test.stage == TEST_STAGE_WRITE);
+
+    for (size_t i = 0U; (i < 128U) && (ctx.state == STATE_TEST); ++i) {
+        algorithm_poll(&ctx);
+    }
+
+    assert(ctx.state == STATE_DUTY);
+    assert(ctx.test.stage == TEST_STAGE_FINISH_OK);
+    assert(ctx.test.result_valid);
+    assert(ctx.test.result_status == TEST_RESULT_STATUS_OK);
+    assert(ctx.test.total_errors == 0U);
+    assert(ctx.test.block_index == TEST_MODE_BLOCK_COUNT);
+}
+
 static volatile bool rtc_1hz_pending = false;
 
 int main(void) {
@@ -84,6 +119,7 @@ int main(void) {
     init_done_to_alarm();
     init_fail_to_alarm();
     duty_start_erase_with_payload();
+    duty_start_test_runs_to_done();
 
     SystemContext ctx = {
         .state = STATE_OBSERVE,

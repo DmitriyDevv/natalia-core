@@ -1,5 +1,38 @@
 #include "board_api.h"
 
+#include <string.h>
+
+#include "test_mode_config.h"
+
+#define BOARD_STUB_NAND_BANK_COUNT 2U
+#define BOARD_STUB_NAND_SIZE (TEST_MODE_BLOCK_SIZE * TEST_MODE_BLOCK_COUNT)
+
+static uint8_t board_stub_nand[BOARD_STUB_NAND_BANK_COUNT][BOARD_STUB_NAND_SIZE];
+
+static int board_stub_nand_index(uint8_t bank_id) {
+    if ((bank_id == 0U) || (bank_id > BOARD_STUB_NAND_BANK_COUNT)) {
+        return -1;
+    }
+
+    return (int)(bank_id - 1U);
+}
+
+static BoardStatus board_stub_check_nand_range(uint8_t bank_id, uint32_t address, size_t size, int *index) {
+    int bank_index = board_stub_nand_index(bank_id);
+
+    if (bank_index < 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+    if ((address > BOARD_STUB_NAND_SIZE) || (size > (BOARD_STUB_NAND_SIZE - address))) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (index != NULL) {
+        *index = bank_index;
+    }
+    return BOARD_OK;
+}
+
 BoardStatus board_init_hardware(void) {
     return BOARD_OK;
 }
@@ -72,23 +105,52 @@ BoardStatus board_nand_disconnect(uint8_t bank_id) {
 }
 
 BoardStatus board_nand_read(uint8_t bank_id, uint32_t address, void *buffer, size_t size) {
-    (void)bank_id;
-    (void)address;
-    (void)buffer;
-    (void)size;
+    int bank_index = 0;
+    BoardStatus status;
+
+    if ((buffer == NULL) && (size > 0U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = board_stub_check_nand_range(bank_id, address, size, &bank_index);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    if (size > 0U) {
+        (void)memcpy(buffer, &board_stub_nand[bank_index][address], size);
+    }
     return BOARD_OK;
 }
 
 BoardStatus board_nand_write(uint8_t bank_id, uint32_t address, const void *buffer, size_t size) {
-    (void)bank_id;
-    (void)address;
-    (void)buffer;
-    (void)size;
+    int bank_index = 0;
+    BoardStatus status;
+
+    if ((buffer == NULL) && (size > 0U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = board_stub_check_nand_range(bank_id, address, size, &bank_index);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    if (size > 0U) {
+        (void)memcpy(&board_stub_nand[bank_index][address], buffer, size);
+    }
     return BOARD_OK;
 }
 
 BoardStatus board_nand_erase_start(uint8_t bank_id) {
-    (void)bank_id;
+    int bank_index = 0;
+    BoardStatus status = board_stub_check_nand_range(bank_id, 0U, BOARD_STUB_NAND_SIZE, &bank_index);
+
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    (void)memset(board_stub_nand[bank_index], 0xFF, BOARD_STUB_NAND_SIZE);
     return BOARD_OK;
 }
 
