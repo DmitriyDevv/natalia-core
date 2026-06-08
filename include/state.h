@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "dump_mode_config.h"
 #include "test_mode_config.h"
 
 typedef enum {
@@ -230,6 +231,11 @@ typedef struct {
     uint32_t size;
     uint32_t bytes_done;
     uint32_t last_dumped_packet;
+    uint32_t packet_size;
+    uint32_t send_offset;
+    uint32_t usb_retry_count;
+    uint8_t packet_buffer[DUMP_MODE_PACKET_SIZE];
+    bool operation_failed;
     bool finish_requested;
     SystemState finish_target_state;
 } DumpContext;

@@ -632,6 +632,11 @@ ActionResult action_start_dump(SystemContext *ctx, const SystemEvent *event) {
     ctx->dump.size = event->command.dump.size;
     ctx->dump.bytes_done = 0U;
     ctx->dump.last_dumped_packet = 0U;
+    ctx->dump.packet_size = 0U;
+    ctx->dump.send_offset = 0U;
+    ctx->dump.usb_retry_count = 0U;
+    (void)memset(ctx->dump.packet_buffer, 0, sizeof(ctx->dump.packet_buffer));
+    ctx->dump.operation_failed = false;
     ctx->dump.finish_requested = false;
     ctx->dump.finish_target_state = STATE_DUTY;
     ctx->dump.stage = DUMP_STAGE_ENTER;
@@ -1067,6 +1072,10 @@ ActionResult action_finish_dump_alarm(SystemContext *ctx) {
 ActionResult action_fix_dump_results(SystemContext *ctx) {
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
+    }
+    if (ctx->dump.operation_failed) {
+        ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+        return ACTION_ALARM;
     }
     ctx->dump.stage = DUMP_STAGE_FINISH_OK;
     return ACTION_OK;

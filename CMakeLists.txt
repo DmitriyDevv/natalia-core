@@ -14,6 +14,7 @@ add_executable(natalia_core main.c
         src/board_api_stub.c
         src/algorithm.c
         include/algorithm.h
+        include/dump_mode_config.h
         include/test_mode_config.h
         src/observe.c
         include/observe.h
