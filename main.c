@@ -77,6 +77,11 @@ static void duty_start_erase_with_payload(void) {
     assert(ctx.previous_state == STATE_DUTY);
     assert(ctx.erase.bank == NAND_BANK_1);
     assert(ctx.erase.stage == ERASE_STAGE_WAIT);
+
+    algorithm_poll(&ctx);
+
+    assert(ctx.state == STATE_DUTY);
+    assert(ctx.erase.stage == ERASE_STAGE_FINISH_OK);
 }
 
 static void duty_start_test_runs_to_done(void) {

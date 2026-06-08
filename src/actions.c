@@ -524,6 +524,7 @@ ActionResult action_start_erase(SystemContext *ctx, const SystemEvent *event) {
     ctx->erase.bank = bank;
     ctx->erase.power_after_done = event->command.erase.power_after_done;
     ctx->erase.current_address = 0U;
+    ctx->erase.operation_failed = false;
     ctx->erase.finish_requested = false;
     ctx->erase.stage = ERASE_STAGE_ENTER;
 
@@ -754,6 +755,10 @@ ActionResult action_update_nand_state(SystemContext *ctx) {
 
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
+    }
+    if (ctx->erase.operation_failed) {
+        ctx->erase.stage = ERASE_STAGE_FINISH_ALARM;
+        return ACTION_ALARM;
     }
 
     nand = nand_state(ctx, ctx->erase.bank);

@@ -6,6 +6,52 @@
 #include "dump_mode_config.h"
 #include "test_mode_config.h"
 
+static uint8_t erase_bank_id(NandBank bank) {
+    return (uint8_t)bank;
+}
+
+static void finish_erase_step(SystemContext *ctx) {
+    const SystemEvent done_event = {
+        .type = EVENT_ERASE_DONE,
+        .msg_id = 0U
+    };
+
+    (void)handle_event(ctx, &done_event);
+}
+
+static void erase_mode_wait_step(SystemContext *ctx) {
+    uint8_t is_done = 0U;
+    BoardStatus status = board_nand_erase_is_done(erase_bank_id(ctx->erase.bank), &is_done);
+
+    if (status != BOARD_OK) {
+        ctx->erase.operation_failed = true;
+        ctx->erase.stage = ERASE_STAGE_FINISH_ALARM;
+        finish_erase_step(ctx);
+        return;
+    }
+
+    if (is_done != 0U) {
+        ctx->erase.stage = ERASE_STAGE_FINISH_OK;
+        finish_erase_step(ctx);
+    }
+}
+
+static void erase_mode_poll(SystemContext *ctx) {
+    switch (ctx->erase.stage) {
+        case ERASE_STAGE_WAIT:
+            erase_mode_wait_step(ctx);
+            break;
+        case ERASE_STAGE_IDLE:
+        case ERASE_STAGE_ENTER:
+        case ERASE_STAGE_START:
+        case ERASE_STAGE_FINISH_OK:
+        case ERASE_STAGE_FINISH_CMD:
+        case ERASE_STAGE_FINISH_ALARM:
+        default:
+            break;
+    }
+}
+
 static uint8_t test_bank_id(NandBank bank) {
     return (uint8_t)bank;
 }
@@ -257,7 +303,9 @@ void algorithm_poll(SystemContext *ctx) {
         return;
     }
 
-    if (ctx->state == STATE_TEST) {
+    if (ctx->state == STATE_ERASE) {
+        erase_mode_poll(ctx);
+    } else if (ctx->state == STATE_TEST) {
         test_mode_poll(ctx);
     } else if (ctx->state == STATE_DUMP) {
         dump_mode_poll(ctx);

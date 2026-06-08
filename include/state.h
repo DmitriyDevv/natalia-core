@@ -201,6 +201,7 @@ typedef struct {
     PowerAfterDone power_after_done;
     EraseStage stage;
     uint32_t current_address;
+    bool operation_failed;
     bool finish_requested;
 } EraseContext;
 
