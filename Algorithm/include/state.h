@@ -6,6 +6,9 @@
 
 #include "instrument_time.h"
 
+#include "dump_mode_config.h"
+#include "test_mode_config.h"
+
 typedef enum {
     STATE_INIT,
     STATE_DUTY,
@@ -200,6 +203,7 @@ typedef struct {
     PowerAfterDone power_after_done;
     EraseStage stage;
     uint32_t current_address;
+    bool operation_failed;
     bool finish_requested;
 } EraseContext;
 
@@ -208,8 +212,16 @@ typedef struct {
     PowerAfterDone power_after_done;
     TestStage stage;
     uint32_t test_mask;
+    uint32_t current_address;
+    uint32_t block_index;
     uint32_t result_status;
+    uint32_t total_errors;
+    uint32_t failed_address;
+    uint16_t nerr[TEST_MODE_BLOCK_COUNT];
+    uint8_t write_buffer[TEST_MODE_BLOCK_SIZE];
+    uint8_t read_buffer[TEST_MODE_BLOCK_SIZE];
     bool result_valid;
+    bool operation_failed;
     bool finish_requested;
     SystemState finish_target_state;
 } TestContext;
@@ -222,6 +234,11 @@ typedef struct {
     uint32_t size;
     uint32_t bytes_done;
     uint32_t last_dumped_packet;
+    uint32_t packet_size;
+    uint32_t send_offset;
+    uint32_t usb_retry_count;
+    uint8_t packet_buffer[DUMP_MODE_PACKET_SIZE];
+    bool operation_failed;
     bool finish_requested;
     SystemState finish_target_state;
 } DumpContext;

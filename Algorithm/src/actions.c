@@ -1,6 +1,8 @@
 #include "actions.h"
 #include "mram_store.h"
 
+#include <string.h>
+
 static ActionResult board_status_to_action(BoardStatus status) {
     switch (status) {
     case BOARD_OK:
@@ -537,6 +539,7 @@ ActionResult action_start_erase(SystemContext* ctx, const SystemEvent* event) {
     ctx->erase.bank = bank;
     ctx->erase.power_after_done = event->command.erase.power_after_done;
     ctx->erase.current_address = 0U;
+    ctx->erase.operation_failed = false;
     ctx->erase.finish_requested = false;
     ctx->erase.stage = ERASE_STAGE_ENTER;
 
@@ -580,8 +583,16 @@ ActionResult action_start_test(SystemContext* ctx, const SystemEvent* event) {
     ctx->test.bank = bank;
     ctx->test.power_after_done = event->command.test.power_after_done;
     ctx->test.test_mask = event->command.test.test_mask;
+    ctx->test.current_address = 0U;
+    ctx->test.block_index = 0U;
     ctx->test.result_status = 0U;
+    ctx->test.total_errors = 0U;
+    ctx->test.failed_address = TEST_MODE_FAILED_ADDRESS_NONE;
+    (void)memset(ctx->test.nerr, 0, sizeof(ctx->test.nerr));
+    (void)memset(ctx->test.write_buffer, 0, sizeof(ctx->test.write_buffer));
+    (void)memset(ctx->test.read_buffer, 0, sizeof(ctx->test.read_buffer));
     ctx->test.result_valid = false;
+    ctx->test.operation_failed = false;
     ctx->test.finish_requested = false;
     ctx->test.finish_target_state = STATE_DUTY;
     ctx->test.stage = TEST_STAGE_ENTER;
@@ -637,6 +648,11 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
     ctx->dump.size = event->command.dump.size;
     ctx->dump.bytes_done = 0U;
     ctx->dump.last_dumped_packet = 0U;
+    ctx->dump.packet_size = 0U;
+    ctx->dump.send_offset = 0U;
+    ctx->dump.usb_retry_count = 0U;
+    (void)memset(ctx->dump.packet_buffer, 0, sizeof(ctx->dump.packet_buffer));
+    ctx->dump.operation_failed = false;
     ctx->dump.finish_requested = false;
     ctx->dump.finish_target_state = STATE_DUTY;
     ctx->dump.stage = DUMP_STAGE_ENTER;
@@ -755,6 +771,10 @@ ActionResult action_update_nand_state(SystemContext* ctx) {
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
     }
+    if (ctx->erase.operation_failed) {
+        ctx->erase.stage = ERASE_STAGE_FINISH_ALARM;
+        return ACTION_ALARM;
+    }
 
     nand = nand_state(ctx, ctx->erase.bank);
     if (nand == NULL) {
@@ -845,8 +865,11 @@ ActionResult action_update_test_results(SystemContext* ctx) {
     ctx->test.stage = TEST_STAGE_SAVE;
     result.bank = (uint8_t)ctx->test.bank;
     result.status = ctx->test.result_status;
+    result.total_errors = ctx->test.total_errors;
+    result.failed_address = ctx->test.failed_address;
+    (void)memcpy(result.nerr, ctx->test.nerr, sizeof(result.nerr));
     ActionResult save_result = board_status_to_action(mram_store_save_test_result(&result));
-    if (save_result == ACTION_OK) {
+    if ((save_result == ACTION_OK) && !ctx->test.operation_failed) {
         ctx->test.result_valid = true;
     } else {
         ctx->test.result_valid = false;
@@ -1090,6 +1113,10 @@ ActionResult action_finish_dump_alarm(SystemContext* ctx) {
 ActionResult action_fix_dump_results(SystemContext* ctx) {
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
+    }
+    if (ctx->dump.operation_failed) {
+        ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+        return ACTION_ALARM;
     }
     ctx->dump.stage = DUMP_STAGE_FINISH_OK;
     return ACTION_OK;
