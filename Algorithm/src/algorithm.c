@@ -1,6 +1,7 @@
 #include "algorithm.h"
 
 #include <stddef.h>
+#include <string.h>
 
 #include "board_api.h"
 #include "dump_mode_config.h"
@@ -10,7 +11,7 @@ static uint8_t erase_bank_id(NandBank bank) {
     return (uint8_t)bank;
 }
 
-static void finish_erase_step(SystemContext *ctx) {
+static void finish_erase_step(SystemContext* ctx) {
     const SystemEvent done_event = {
         .type = EVENT_ERASE_DONE,
         .msg_id = 0U
@@ -19,7 +20,7 @@ static void finish_erase_step(SystemContext *ctx) {
     (void)handle_event(ctx, &done_event);
 }
 
-static void erase_mode_wait_step(SystemContext *ctx) {
+static void erase_mode_wait_step(SystemContext* ctx) {
     uint8_t is_done = 0U;
     BoardStatus status = board_nand_erase_is_done(erase_bank_id(ctx->erase.bank), &is_done);
 
@@ -36,19 +37,19 @@ static void erase_mode_wait_step(SystemContext *ctx) {
     }
 }
 
-static void erase_mode_poll(SystemContext *ctx) {
+static void erase_mode_poll(SystemContext* ctx) {
     switch (ctx->erase.stage) {
-        case ERASE_STAGE_WAIT:
-            erase_mode_wait_step(ctx);
-            break;
-        case ERASE_STAGE_IDLE:
-        case ERASE_STAGE_ENTER:
-        case ERASE_STAGE_START:
-        case ERASE_STAGE_FINISH_OK:
-        case ERASE_STAGE_FINISH_CMD:
-        case ERASE_STAGE_FINISH_ALARM:
-        default:
-            break;
+    case ERASE_STAGE_WAIT:
+        erase_mode_wait_step(ctx);
+        break;
+    case ERASE_STAGE_IDLE:
+    case ERASE_STAGE_ENTER:
+    case ERASE_STAGE_START:
+    case ERASE_STAGE_FINISH_OK:
+    case ERASE_STAGE_FINISH_CMD:
+    case ERASE_STAGE_FINISH_ALARM:
+    default:
+        break;
     }
 }
 
@@ -56,29 +57,32 @@ static uint8_t test_bank_id(NandBank bank) {
     return (uint8_t)bank;
 }
 
-static uint32_t test_block_address(uint32_t block_index) {
-    return block_index * TEST_MODE_BLOCK_SIZE;
+static uint32_t test_packet_address(uint32_t packet_index) {
+    return packet_index * TEST_MODE_BLOCK_SIZE;
 }
 
-static uint8_t make_test_pattern_byte(const TestContext *test, uint32_t address, size_t offset) {
+static uint8_t make_test_pattern_byte(const TestContext* test, uint32_t address, size_t offset) {
     uint32_t value = address;
+
     value ^= (uint32_t)offset;
     value ^= test->test_mask;
     value ^= 0xA5A5A5A5UL;
     value ^= value >> 16U;
     value ^= value >> 8U;
+
     return (uint8_t)(value & 0xFFU);
 }
 
-static void fill_test_pattern(TestContext *test) {
-    uint32_t address = test_block_address(test->block_index);
+static void fill_test_pattern(TestContext* test) {
+    uint32_t address = test_packet_address(test->block_index);
+    size_t index;
 
-    for (size_t i = 0U; i < TEST_MODE_BLOCK_SIZE; ++i) {
-        test->write_buffer[i] = make_test_pattern_byte(test, address, i);
+    for (index = 0U; index < TEST_MODE_BLOCK_SIZE; ++index) {
+        test->write_buffer[index] = make_test_pattern_byte(test, address, index);
     }
 }
 
-static void finish_test_step(SystemContext *ctx) {
+static void finish_test_step(SystemContext* ctx) {
     const SystemEvent done_event = {
         .type = EVENT_TEST_DONE,
         .msg_id = 0U
@@ -87,92 +91,169 @@ static void finish_test_step(SystemContext *ctx) {
     (void)handle_event(ctx, &done_event);
 }
 
-static void fail_test_step(SystemContext *ctx, uint32_t status_flag) {
+static void fail_test_step(SystemContext* ctx, uint32_t status_flag) {
     ctx->test.result_status |= status_flag;
     ctx->test.operation_failed = true;
     ctx->test.result_valid = false;
+    ctx->test.write_started = false;
     ctx->test.stage = TEST_STAGE_SAVE;
     finish_test_step(ctx);
 }
 
-static void test_mode_write_step(SystemContext *ctx) {
-    TestContext *test = &ctx->test;
-    uint32_t address = test_block_address(test->block_index);
+static void test_mode_erase_step(SystemContext* ctx) {
+    TestContext* test = &ctx->test;
+    BoardStatus status;
+    uint8_t is_done = 0U;
 
-    fill_test_pattern(test);
-
-    if (board_nand_write(test_bank_id(test->bank), address, test->write_buffer, TEST_MODE_BLOCK_SIZE) != BOARD_OK) {
-        fail_test_step(ctx, TEST_RESULT_STATUS_NAND_WRITE_ERROR);
+    status = board_nand_erase_is_done(test_bank_id(test->bank), &is_done);
+    if (status != BOARD_OK) {
+        fail_test_step(ctx, TEST_RESULT_STATUS_NAND_ERASE_ERROR);
         return;
     }
 
-    test->current_address = address;
-    test->stage = TEST_STAGE_READ;
-}
-
-static void test_mode_read_step(SystemContext *ctx) {
-    TestContext *test = &ctx->test;
-    uint32_t address = test_block_address(test->block_index);
-
-    if (board_nand_read(test_bank_id(test->bank), address, test->read_buffer, TEST_MODE_BLOCK_SIZE) != BOARD_OK) {
-        fail_test_step(ctx, TEST_RESULT_STATUS_NAND_READ_ERROR);
+    if (is_done == 0U) {
         return;
     }
 
-    test->current_address = address;
-    test->stage = TEST_STAGE_COMPARE;
-}
-
-static void test_mode_compare_step(SystemContext *ctx) {
-    TestContext *test = &ctx->test;
-    uint32_t address = test_block_address(test->block_index);
-    uint32_t errors = 0U;
-
-    for (size_t i = 0U; i < TEST_MODE_BLOCK_SIZE; ++i) {
-        if (test->write_buffer[i] != test->read_buffer[i]) {
-            ++errors;
-            if (test->failed_address == TEST_MODE_FAILED_ADDRESS_NONE) {
-                test->failed_address = address + (uint32_t)i;
-            }
-        }
-    }
-
-    test->nerr[test->block_index] = (uint16_t)errors;
-    test->total_errors += errors;
-    if (errors > 0U) {
-        test->result_status |= TEST_RESULT_STATUS_COMPARE_MISMATCH;
-    }
-
-    ++test->block_index;
-    if (test->block_index >= TEST_MODE_BLOCK_COUNT) {
+    if (test->final_erase) {
         test->stage = TEST_STAGE_SAVE;
         finish_test_step(ctx);
+        return;
+    }
+
+    status = board_nand_open_write(test_bank_id(test->bank), 0U);
+    if (status != BOARD_OK) {
+        fail_test_step(ctx, TEST_RESULT_STATUS_NAND_WRITE_ERROR);
         return;
     }
 
     test->stage = TEST_STAGE_WRITE;
 }
 
-static void test_mode_poll(SystemContext *ctx) {
+static void test_mode_write_step(SystemContext* ctx) {
+    TestContext* test = &ctx->test;
+    BoardStatus status;
+    uint8_t is_done = 0U;
+
+    if (!test->write_started) {
+        fill_test_pattern(test);
+
+        status = board_nand_open_write(test_bank_id(test->bank), test->block_index);
+        if (status != BOARD_OK) {
+            fail_test_step(ctx, TEST_RESULT_STATUS_NAND_WRITE_ERROR);
+            return;
+        }
+
+        status = board_nand_write_packet(test_bank_id(test->bank), test->write_buffer);
+        if (status != BOARD_OK) {
+            fail_test_step(ctx, TEST_RESULT_STATUS_NAND_WRITE_ERROR);
+            return;
+        }
+
+        test->current_address = test_packet_address(test->block_index);
+        test->write_started = true;
+    }
+
+    status = board_nand_write_flush(test_bank_id(test->bank), &is_done);
+    if (status != BOARD_OK) {
+        fail_test_step(ctx, TEST_RESULT_STATUS_NAND_WRITE_ERROR);
+        return;
+    }
+
+    if (is_done == 0U) {
+        return;
+    }
+
+    test->write_started = false;
+    test->stage = TEST_STAGE_READ;
+}
+
+static void test_mode_read_step(SystemContext* ctx) {
+    TestContext* test = &ctx->test;
+    BoardStatus status;
+
+    status = board_nand_open_read(test_bank_id(test->bank), test->block_index + 1U);
+    if (status != BOARD_OK) {
+        fail_test_step(ctx, TEST_RESULT_STATUS_NAND_READ_ERROR);
+        return;
+    }
+
+    (void)memset(test->read_buffer, 0, sizeof(test->read_buffer));
+
+    status = board_nand_read_packet(test_bank_id(test->bank), test->block_index, test->read_buffer);
+    if (status != BOARD_OK) {
+        fail_test_step(ctx, TEST_RESULT_STATUS_NAND_READ_ERROR);
+        return;
+    }
+
+    test->current_address = test_packet_address(test->block_index);
+    test->stage = TEST_STAGE_COMPARE;
+}
+
+static void test_mode_compare_step(SystemContext* ctx) {
+    TestContext* test = &ctx->test;
+    uint32_t address = test_packet_address(test->block_index);
+    uint32_t errors = 0U;
+    size_t index;
+    BoardStatus status;
+
+    for (index = 0U; index < TEST_MODE_BLOCK_SIZE; ++index) {
+        if (test->write_buffer[index] != test->read_buffer[index]) {
+            ++errors;
+
+            if (test->failed_address == TEST_MODE_FAILED_ADDRESS_NONE) {
+                test->failed_address = address + (uint32_t)index;
+            }
+        }
+    }
+
+    test->nerr[test->block_index] = (uint16_t)errors;
+    test->total_errors += errors;
+
+    if (errors > 0U) {
+        test->result_status |= TEST_RESULT_STATUS_COMPARE_MISMATCH;
+    }
+
+    ++test->block_index;
+
+    if (test->block_index >= TEST_MODE_BLOCK_COUNT) {
+        test->final_erase = true;
+
+        status = board_nand_erase_start(test_bank_id(test->bank));
+        if (status != BOARD_OK) {
+            fail_test_step(ctx, TEST_RESULT_STATUS_NAND_ERASE_ERROR);
+            return;
+        }
+
+        test->stage = TEST_STAGE_ERASE;
+        return;
+    }
+
+    test->stage = TEST_STAGE_WRITE;
+}
+
+static void test_mode_poll(SystemContext* ctx) {
     switch (ctx->test.stage) {
-        case TEST_STAGE_WRITE:
-            test_mode_write_step(ctx);
-            break;
-        case TEST_STAGE_READ:
-            test_mode_read_step(ctx);
-            break;
-        case TEST_STAGE_COMPARE:
-            test_mode_compare_step(ctx);
-            break;
-        case TEST_STAGE_IDLE:
-        case TEST_STAGE_ENTER:
-        case TEST_STAGE_SAVE:
-        case TEST_STAGE_ERASE:
-        case TEST_STAGE_FINISH_OK:
-        case TEST_STAGE_FINISH_CMD:
-        case TEST_STAGE_FINISH_ALARM:
-        default:
-            break;
+    case TEST_STAGE_ERASE:
+        test_mode_erase_step(ctx);
+        break;
+    case TEST_STAGE_WRITE:
+        test_mode_write_step(ctx);
+        break;
+    case TEST_STAGE_READ:
+        test_mode_read_step(ctx);
+        break;
+    case TEST_STAGE_COMPARE:
+        test_mode_compare_step(ctx);
+        break;
+    case TEST_STAGE_IDLE:
+    case TEST_STAGE_ENTER:
+    case TEST_STAGE_SAVE:
+    case TEST_STAGE_FINISH_OK:
+    case TEST_STAGE_FINISH_CMD:
+    case TEST_STAGE_FINISH_ALARM:
+    default:
+        break;
     }
 }
 
@@ -180,7 +261,7 @@ static uint8_t dump_bank_id(NandBank bank) {
     return (uint8_t)bank;
 }
 
-static uint32_t dump_next_packet_size(const DumpContext *dump) {
+static uint32_t dump_next_packet_size(const DumpContext* dump) {
     uint32_t remaining = dump->size - dump->bytes_done;
 
     if (remaining > DUMP_MODE_PACKET_SIZE) {
@@ -190,7 +271,7 @@ static uint32_t dump_next_packet_size(const DumpContext *dump) {
     return remaining;
 }
 
-static void finish_dump_step(SystemContext *ctx) {
+static void finish_dump_step(SystemContext* ctx) {
     const SystemEvent done_event = {
         .type = EVENT_DUMP_DONE,
         .msg_id = 0U
@@ -199,7 +280,7 @@ static void finish_dump_step(SystemContext *ctx) {
     (void)handle_event(ctx, &done_event);
 }
 
-static void fail_dump_step(SystemContext *ctx) {
+static void fail_dump_step(SystemContext* ctx) {
     ctx->dump.operation_failed = true;
     ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
     finish_dump_step(ctx);
@@ -207,19 +288,29 @@ static void fail_dump_step(SystemContext *ctx) {
 
 static void dump_mode_read_step(SystemContext *ctx) {
     DumpContext *dump = &ctx->dump;
+    uint32_t packet_index;
     uint32_t address;
 
     if (dump->bytes_done >= dump->size) {
-        dump->stage = DUMP_STAGE_CHECK;
+        dump->stage = DUMP_STAGE_FINISH_OK;
+        finish_dump_step(ctx);
         return;
     }
 
-    dump->packet_size = dump_next_packet_size(dump);
-    dump->send_offset = 0U;
-    dump->usb_retry_count = 0U;
     address = dump->start_address + dump->bytes_done;
 
-    if (board_nand_read(dump_bank_id(dump->bank), address, dump->packet_buffer, dump->packet_size) != BOARD_OK) {
+    if ((address % DUMP_MODE_PACKET_SIZE) != 0U) {
+        fail_dump_step(ctx);
+        return;
+    }
+
+    packet_index = address / DUMP_MODE_PACKET_SIZE;
+
+    dump->packet_size = DUMP_MODE_PACKET_SIZE;
+    dump->send_offset = 0U;
+    dump->usb_retry_count = 0U;
+
+    if (board_nand_read_packet(dump_bank_id(dump->bank), packet_index, dump->packet_buffer) != BOARD_OK) {
         fail_dump_step(ctx);
         return;
     }
@@ -227,8 +318,8 @@ static void dump_mode_read_step(SystemContext *ctx) {
     dump->stage = DUMP_STAGE_SEND;
 }
 
-static void dump_mode_send_step(SystemContext *ctx) {
-    DumpContext *dump = &ctx->dump;
+static void dump_mode_send_step(SystemContext* ctx) {
+    DumpContext* dump = &ctx->dump;
     size_t bytes_written = 0U;
     size_t bytes_left;
     BoardStatus status;
@@ -240,6 +331,7 @@ static void dump_mode_send_step(SystemContext *ctx) {
 
     bytes_left = (size_t)(dump->packet_size - dump->send_offset);
     status = board_usb_write(&dump->packet_buffer[dump->send_offset], bytes_left, &bytes_written);
+
     if ((status != BOARD_OK) || (bytes_written == 0U) || (bytes_written > bytes_left)) {
         if (dump->usb_retry_count < DUMP_MODE_USB_MAX_RETRIES) {
             ++dump->usb_retry_count;
@@ -259,8 +351,8 @@ static void dump_mode_send_step(SystemContext *ctx) {
     }
 }
 
-static void dump_mode_check_step(SystemContext *ctx) {
-    DumpContext *dump = &ctx->dump;
+static void dump_mode_check_step(SystemContext* ctx) {
+    DumpContext* dump = &ctx->dump;
 
     dump->bytes_done += dump->packet_size;
     ++dump->last_dumped_packet;
@@ -277,24 +369,97 @@ static void dump_mode_check_step(SystemContext *ctx) {
     dump->stage = DUMP_STAGE_READ;
 }
 
-static void dump_mode_poll(SystemContext *ctx) {
+static void dump_mode_poll(SystemContext* ctx) {
     switch (ctx->dump.stage) {
-        case DUMP_STAGE_READ:
-            dump_mode_read_step(ctx);
-            break;
-        case DUMP_STAGE_SEND:
-            dump_mode_send_step(ctx);
-            break;
-        case DUMP_STAGE_CHECK:
-            dump_mode_check_step(ctx);
-            break;
-        case DUMP_STAGE_IDLE:
-        case DUMP_STAGE_ENTER:
-        case DUMP_STAGE_FINISH_OK:
-        case DUMP_STAGE_FINISH_CMD:
-        case DUMP_STAGE_FINISH_ALARM:
-        default:
-            break;
+    case DUMP_STAGE_READ:
+        dump_mode_read_step(ctx);
+        break;
+    case DUMP_STAGE_SEND:
+        dump_mode_send_step(ctx);
+        break;
+    case DUMP_STAGE_CHECK:
+        dump_mode_check_step(ctx);
+        break;
+    case DUMP_STAGE_IDLE:
+    case DUMP_STAGE_ENTER:
+    case DUMP_STAGE_FINISH_OK:
+    case DUMP_STAGE_FINISH_CMD:
+    case DUMP_STAGE_FINISH_ALARM:
+    default:
+        break;
+    }
+}
+
+
+static uint8_t observe_bank_id(NandBank bank) {
+    return (uint8_t)bank;
+}
+
+static void observe_mode_full_step(SystemContext *ctx) {
+    const SystemEvent full_event = {
+        .type = EVENT_NAND_FULL,
+        .msg_id = 0U
+    };
+
+    (void)handle_event(ctx, &full_event);
+}
+
+static void observe_mode_fail(SystemContext *ctx) {
+    ctx->observe.operation_failed = true;
+    ctx->observe.pending_write = false;
+    ctx->observe.write_active = false;
+    ctx->observe.registration_enabled = false;
+    ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
+}
+
+static void observe_mode_poll(SystemContext *ctx) {
+    ObserveContext *observe = &ctx->observe;
+    BoardStatus status;
+    uint8_t is_done = 0U;
+    uint8_t is_full = 0U;
+
+    if (observe->stage != OBSERVE_STAGE_ACTIVE) {
+        return;
+    }
+
+    if (observe->write_active) {
+        status = board_nand_write_flush(observe_bank_id(observe->bank), &is_done);
+        if (status != BOARD_OK) {
+            observe_mode_fail(ctx);
+            return;
+        }
+
+        if (is_done == 0U) {
+            return;
+        }
+
+        observe->write_active = false;
+        ++observe->packet_index;
+        observe->committed_packet_count = observe->packet_index;
+        ++observe->events_written;
+
+        status = board_nand_is_full(observe_bank_id(observe->bank), &is_full);
+        if (status != BOARD_OK) {
+            observe_mode_fail(ctx);
+            return;
+        }
+
+        if (is_full != 0U) {
+            observe_mode_full_step(ctx);
+            return;
+        }
+    }
+
+    if (observe->pending_write) {
+        status = board_nand_write_packet(observe_bank_id(observe->bank),
+                                         observe->packet_buffer);
+        if (status != BOARD_OK) {
+            observe_mode_fail(ctx);
+            return;
+        }
+
+        observe->pending_write = false;
+        observe->write_active = true;
     }
 }
 
@@ -307,6 +472,8 @@ void algorithm_poll(SystemContext *ctx) {
         erase_mode_poll(ctx);
     } else if (ctx->state == STATE_TEST) {
         test_mode_poll(ctx);
+    } else if (ctx->state == STATE_OBSERVE) {
+        observe_mode_poll(ctx);
     } else if (ctx->state == STATE_DUMP) {
         dump_mode_poll(ctx);
     }

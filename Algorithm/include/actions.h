@@ -1,7 +1,7 @@
-#ifndef NATALIA_CORE_ACTION_H
+    #ifndef NATALIA_CORE_ACTION_H
 #define NATALIA_CORE_ACTION_H
 
-#include "board_api.h"
+#include "../../BSP/Board_API/include/board_api.h"
 #include "state.h"
 #include "alarm.h"
 #include "transport.h"

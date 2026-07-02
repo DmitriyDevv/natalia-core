@@ -5,7 +5,7 @@
 
 #include "state.h"
 #include "status.h"
-#include "board_api.h"
+#include "../../BSP/Board_API/include/board_api.h"
 
 typedef enum {
     TRANSPORT_ACK_OK          = 0x00U,

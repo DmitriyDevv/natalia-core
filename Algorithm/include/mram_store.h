@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#include "board_api.h"
+#include "../../BSP/Board_API/include/board_api.h"
 #include "alarm.h"
 #include "test_mode_config.h"
 

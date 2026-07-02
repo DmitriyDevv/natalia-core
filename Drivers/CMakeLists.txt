@@ -3,6 +3,7 @@ add_library(natalia_drivers INTERFACE)
 option(NATALIA_ENABLE_PED_REG_DRIVER "Build PED_REG driver" OFF)
 option(NATALIA_ENABLE_UNICAN_DRIVER "Build UniCAN driver" OFF)
 option(NATALIA_ENABLE_USB_DEVICE_DRIVER "Build USB Device driver" OFF)
+option(NATALIA_ENABLE_NAND_DRIVER "Build NAND driver" OFF)
 
 if (NATALIA_ENABLE_PED_REG_DRIVER)
     add_subdirectory(PED_REG)
@@ -25,5 +26,13 @@ if (NATALIA_ENABLE_USB_DEVICE_DRIVER)
 
     target_link_libraries(natalia_drivers INTERFACE
             natalia_usb_device
+    )
+endif()
+
+if (NATALIA_ENABLE_NAND_DRIVER)
+    add_subdirectory(NAND)
+
+    target_link_libraries(natalia_drivers INTERFACE
+            natalia_nand
     )
 endif()

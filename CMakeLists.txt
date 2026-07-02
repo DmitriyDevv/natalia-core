@@ -38,10 +38,57 @@ option(NATALIA_ENABLE_USB_DEVICE_DRIVER
         "Build USB Device driver"
         OFF)
 
+option(NATALIA_ENABLE_NAND_DRIVER
+        "Build NAND driver"
+        OFF)
+
+option(NATALIA_QSPI_SAMPLE_SHIFT
+        "Enable QUADSPI sample shift"
+        OFF)
+
+option(NATALIA_QSPI_DMA_READ
+        "Use DMA automatically in qspi_read when transfer is aligned and large enough"
+        ON)
+
+option(NATALIA_QSPI_DMA_WRITE
+        "Use DMA automatically in qspi_write when transfer is aligned and large enough"
+        ON)
+
+option(NATALIA_ENABLE_BOARD_TEST_HOOKS
+        "Enable temporary board test hooks"
+        OFF)
+
+set(NATALIA_QSPI_TARGET_HZ "100000" CACHE STRING
+        "QUADSPI target clock frequency"
+)
+
+set(NATALIA_QSPI_DMA_AUTO_MIN_SIZE "16" CACHE STRING
+        "Minimum transfer size for automatic QSPI DMA path"
+)
+
+set(NATALIA_NAND_CACHE_READ_MODE "1" CACHE STRING
+        "NAND cache read mode: 1, 2 or 4"
+)
+
+set(NATALIA_NAND_PROGRAM_LOAD_MODE "4" CACHE STRING
+        "NAND program load mode: 1 or 4"
+)
+
 set(NATALIA_NAND_PS_OFF_LEVEL "HIGH" CACHE STRING
         "NAND power-switch OFF level: HIGH or LOW. Must match installed load switch."
 )
 
+set(NATALIA_NAND_POWER_CONTROL "ON" CACHE STRING
+        "NAND power control mode: ON uses PS/PSON pins, OFF assumes NAND is externally powered."
+)
+
+set(NATALIA_FIRMWARE_MAIN "main.c" CACHE STRING
+        "Firmware main source file"
+)
+
+set_property(CACHE NATALIA_NAND_CACHE_READ_MODE PROPERTY STRINGS 1 2 4)
+set_property(CACHE NATALIA_NAND_PROGRAM_LOAD_MODE PROPERTY STRINGS 1 4)
+set_property(CACHE NATALIA_NAND_POWER_CONTROL PROPERTY STRINGS ON OFF)
 set_property(CACHE NATALIA_NAND_PS_OFF_LEVEL PROPERTY STRINGS HIGH LOW)
 
 # -----------------------------------------------------------------------------
@@ -73,6 +120,28 @@ if (NOT NATALIA_NAND_PS_OFF_LEVEL STREQUAL "HIGH" AND
     )
 endif()
 
+if (NOT NATALIA_NAND_POWER_CONTROL STREQUAL "ON" AND
+        NOT NATALIA_NAND_POWER_CONTROL STREQUAL "OFF")
+    message(FATAL_ERROR
+            "Set -DNATALIA_NAND_POWER_CONTROL=ON or OFF"
+    )
+endif()
+
+if (NOT NATALIA_NAND_CACHE_READ_MODE STREQUAL "1" AND
+        NOT NATALIA_NAND_CACHE_READ_MODE STREQUAL "2" AND
+        NOT NATALIA_NAND_CACHE_READ_MODE STREQUAL "4")
+    message(FATAL_ERROR
+            "Set -DNATALIA_NAND_CACHE_READ_MODE=1, 2 or 4"
+    )
+endif()
+
+if (NOT NATALIA_NAND_PROGRAM_LOAD_MODE STREQUAL "1" AND
+        NOT NATALIA_NAND_PROGRAM_LOAD_MODE STREQUAL "4")
+    message(FATAL_ERROR
+            "Set -DNATALIA_NAND_PROGRAM_LOAD_MODE=1 or 4"
+    )
+endif()
+
 if (NATALIA_BUILD_TESTS AND NOT NATALIA_USE_BOARD_STUBS)
     message(FATAL_ERROR
             "Desktop tests require -DNATALIA_USE_BOARD_STUBS=ON"
@@ -99,6 +168,12 @@ add_subdirectory(Device)
 add_subdirectory(BSP)
 add_subdirectory(Drivers)
 
+if (TARGET natalia_board_api_impl AND TARGET natalia_nand)
+    target_link_libraries(natalia_board_api_impl PUBLIC
+            natalia_nand
+    )
+endif()
+
 if (NATALIA_ENABLE_DETECTOR_PROTO_LOG)
     add_subdirectory(Diagnostics)
 endif()
@@ -109,10 +184,20 @@ add_subdirectory(Algorithm)
 # Firmware executable
 # -----------------------------------------------------------------------------
 
+if (IS_ABSOLUTE "${NATALIA_FIRMWARE_MAIN}")
+    set(NATALIA_FIRMWARE_MAIN_SOURCE "${NATALIA_FIRMWARE_MAIN}")
+else()
+    set(NATALIA_FIRMWARE_MAIN_SOURCE "${CMAKE_SOURCE_DIR}/${NATALIA_FIRMWARE_MAIN}")
+endif()
+
 add_executable(natalia_firmware
-        main.c
+        ${NATALIA_FIRMWARE_MAIN_SOURCE}
         Device/src/syscalls.c
         Device/src/sysmem.c
+)
+
+target_include_directories(natalia_firmware PRIVATE
+        ${CMAKE_SOURCE_DIR}/Algorithm/include
 )
 
 target_link_libraries(natalia_firmware PRIVATE

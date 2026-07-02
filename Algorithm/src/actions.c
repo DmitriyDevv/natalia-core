@@ -444,6 +444,25 @@ ActionResult action_recalc_masked_alarm(SystemContext* ctx) {
     return ACTION_OK;
 }
 
+static void fill_observe_packet(SystemContext *ctx) {
+    uint32_t packet_index;
+    uint32_t index;
+    uint32_t value;
+
+    packet_index = ctx->observe.packet_index;
+
+    for (index = 0U; index < DUMP_MODE_PACKET_SIZE; ++index) {
+        value = 0x4E415441UL;
+        value ^= packet_index * 0x01010101UL;
+        value ^= index * 0x0001003DUL;
+        value ^= ctx->observe.acquisition_period_ticks;
+        value ^= value >> 16U;
+        value ^= value >> 8U;
+
+        ctx->observe.packet_buffer[index] = (uint8_t)(value & 0xFFU);
+    }
+}
+
 ActionResult action_start_observe(SystemContext* ctx, const SystemEvent* event) {
     NandRuntimeState* nand;
     NandBank bank;
@@ -472,12 +491,25 @@ ActionResult action_start_observe(SystemContext* ctx, const SystemEvent* event) 
     ctx->observe.power_after_done = event->command.observe_start.power_after_done;
     ctx->observe.acquisition_period_ticks = event->command.observe_start.acquisition_period_ticks;
     ctx->observe.events_written = 0U;
+    ctx->observe.packet_index = 0U;
+    ctx->observe.committed_packet_count = 0U;
+    (void)memset(ctx->observe.packet_buffer, 0, sizeof(ctx->observe.packet_buffer));
     ctx->observe.registration_enabled = false;
     ctx->observe.finish_requested = false;
+    ctx->observe.pending_write = false;
+    ctx->observe.write_active = false;
+    ctx->observe.operation_failed = false;
     ctx->observe.finish_target_state = STATE_DUTY;
     ctx->observe.stage = OBSERVE_STAGE_ENTER;
 
     result = prepare_single_nand_bank(ctx, bank);
+    if (result != ACTION_OK) {
+        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
+        cleanup_failed_mode_start(ctx, bank, true);
+        return result;
+    }
+
+    result = require_ok(board_nand_open_write(bank_id(bank), 0U));
     if (result != ACTION_OK) {
         ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
         cleanup_failed_mode_start(ctx, bank, true);
@@ -511,10 +543,11 @@ ActionResult action_start_observe(SystemContext* ctx, const SystemEvent* event) 
         cleanup_failed_mode_start(ctx, bank, true);
         return result;
     }
+
     ctx->ped.inhibit_enabled = false;
     ctx->observe.registration_enabled = true;
-
     ctx->observe.stage = OBSERVE_STAGE_ACTIVE;
+
     return ACTION_OK;
 }
 
@@ -594,6 +627,8 @@ ActionResult action_start_test(SystemContext* ctx, const SystemEvent* event) {
     ctx->test.result_valid = false;
     ctx->test.operation_failed = false;
     ctx->test.finish_requested = false;
+    ctx->test.final_erase = false;
+    ctx->test.write_started = false;
     ctx->test.finish_target_state = STATE_DUTY;
     ctx->test.stage = TEST_STAGE_ENTER;
 
@@ -604,13 +639,25 @@ ActionResult action_start_test(SystemContext* ctx, const SystemEvent* event) {
         return result;
     }
 
-    ctx->test.stage = TEST_STAGE_WRITE;
+    result = require_ok(board_nand_erase_start(bank_id(bank)));
+    if (result != ACTION_OK) {
+        ctx->test.result_status |= TEST_RESULT_STATUS_NAND_ERASE_ERROR;
+        ctx->test.operation_failed = true;
+        ctx->test.stage = TEST_STAGE_FINISH_ALARM;
+        cleanup_failed_mode_start(ctx, bank, false);
+        return result;
+    }
+
+    ctx->test.stage = TEST_STAGE_ERASE;
     return ACTION_OK;
 }
 
 ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
     NandBank bank;
     uint8_t is_ready = 0U;
+    uint32_t start_packet;
+    uint32_t packet_count;
+    uint32_t read_limit_packets;
     ActionResult result;
 
     if ((ctx == NULL) || (event == NULL)) {
@@ -626,20 +673,44 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
     if (!is_valid_bank(bank)) {
         return ACTION_ERR_CONTENT;
     }
+
     if (event->command.dump.size == 0U) {
         return ACTION_ERR_CONTENT;
     }
+
+    if ((event->command.dump.start_address % DUMP_MODE_PACKET_SIZE) != 0U) {
+        return ACTION_ERR_CONTENT;
+    }
+
+    if ((event->command.dump.size % DUMP_MODE_PACKET_SIZE) != 0U) {
+        return ACTION_ERR_CONTENT;
+    }
+
+    start_packet = event->command.dump.start_address / DUMP_MODE_PACKET_SIZE;
+    packet_count = event->command.dump.size / DUMP_MODE_PACKET_SIZE;
+
+    if (packet_count == 0U) {
+        return ACTION_ERR_CONTENT;
+    }
+
+    if (start_packet > (UINT32_MAX - packet_count)) {
+        return ACTION_ERR_CONTENT;
+    }
+
+    read_limit_packets = start_packet + packet_count;
 
     result = require_ok(board_usb_is_ready(&is_ready));
     if (result != ACTION_OK) {
         ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
         return result;
     }
+
     if (is_ready == 0U) {
         ctx->usb.is_ready = false;
         ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
         return ACTION_ERR_OTHER;
     }
+
     ctx->usb.is_ready = true;
 
     ctx->dump.bank = bank;
@@ -658,6 +729,13 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
     ctx->dump.stage = DUMP_STAGE_ENTER;
 
     result = prepare_single_nand_bank(ctx, bank);
+    if (result != ACTION_OK) {
+        ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+        cleanup_failed_mode_start(ctx, bank, false);
+        return result;
+    }
+
+    result = require_ok(board_nand_open_read(bank_id(bank), read_limit_packets));
     if (result != ACTION_OK) {
         ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
         cleanup_failed_mode_start(ctx, bank, false);
@@ -896,18 +974,24 @@ ActionResult action_handle_ped_trigger(SystemContext* ctx) {
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
     }
+
     if (!ctx->observe.registration_enabled) {
         return ACTION_OK;
     }
 
+    if (ctx->observe.pending_write || ctx->observe.write_active) {
+        return ACTION_ERR_OTHER;
+    }
+
     result = require_ok(board_ped_read_event(event_buffer, sizeof(event_buffer), &bytes_read));
     if (result != ACTION_OK) {
+        ctx->observe.operation_failed = true;
+        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
         return result;
     }
 
-    if (bytes_read > 0U) {
-        ctx->observe.events_written++;
-    }
+    fill_observe_packet(ctx);
+    ctx->observe.pending_write = true;
 
     return require_ok(board_ped_reset_trigger());
 }

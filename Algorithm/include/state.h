@@ -223,6 +223,8 @@ typedef struct {
     bool result_valid;
     bool operation_failed;
     bool finish_requested;
+    bool final_erase;
+    bool write_started;
     SystemState finish_target_state;
 } TestContext;
 
@@ -249,8 +251,14 @@ typedef struct {
     ObserveStage stage;
     uint32_t acquisition_period_ticks;
     uint32_t events_written;
+    uint32_t packet_index;
+    uint32_t committed_packet_count;
+    uint8_t packet_buffer[DUMP_MODE_PACKET_SIZE];
     bool registration_enabled;
     bool finish_requested;
+    bool pending_write;
+    bool write_active;
+    bool operation_failed;
     SystemState finish_target_state;
 } ObserveContext;
 
