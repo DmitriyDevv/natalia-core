@@ -1,0 +1,44 @@
+#ifndef USB_DEV_CONFIG_H_
+#define USB_DEV_CONFIG_H_
+
+#define SIMPLE_CDC 1
+
+#define USBD_MSC 0
+#define USBD_CDC_CHANNELS 1
+#define USBD_PRINTER 0
+#define USBD_HID 0
+
+#define USBD_CFG_PID ((USBD_MSC << 3) | (USBD_CDC_CHANNELS << 0) | (USBD_PRINTER << 4) | (USBD_HID << 2))
+
+#define USB_VID 0x6666
+#define USB_PID USBD_CFG_PID
+
+#define USBD_CTRL_EP_SIZE 64u
+#define MSC_BOT_EP_SIZE 64u
+#define CDC_DATA_EP_SIZE 64u
+#define CDC_INT_EP_SIZE 10u
+#define PRN_DATA_EP_SIZE 64u
+
+#define CDC_INT_POLLING_INTERVAL 10u
+
+enum usbd_ifnum_ {
+	IFNUM_CDC0_CONTROL,
+	IFNUM_CDC0_DATA,
+	USBD_NUM_INTERFACES
+};
+
+enum usbd_epaddr_ {
+	CTRL_OUT_EP,
+	EMPTY0_EP,
+	CDC0_DATA_OUT_EP,
+	USBD_OUT_EPS,
+
+	CTRL_IN_EP = 0x80,
+	CDC0_INT_IN_EP,
+	CDC0_DATA_IN_EP,
+	USBD_IN_EPS
+};
+
+#define USBD_NUM_EPPAIRS (((USBD_IN_EPS & 0x0fU) > USBD_OUT_EPS) ? (USBD_IN_EPS & 0x0fU) : USBD_OUT_EPS)
+
+#endif

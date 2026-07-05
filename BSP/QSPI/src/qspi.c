@@ -10,7 +10,7 @@
 #define QSPI_CHIP_SELECT_HIGH_TIME 2UL
 
 #ifndef QSPI_TARGET_HZ
-#define QSPI_TARGET_HZ 1000000UL
+#define QSPI_TARGET_HZ 40000000UL
 #endif
 
 #ifndef QSPI_SAMPLE_SHIFT
@@ -22,16 +22,16 @@
 #endif
 
 #ifndef QSPI_DMA_READ_ENABLED
-#define QSPI_DMA_READ_ENABLED 1
+#define QSPI_DMA_READ_ENABLED 0
 #endif
 
 #ifndef QSPI_DMA_WRITE_ENABLED
-#define QSPI_DMA_WRITE_ENABLED 1
+#define QSPI_DMA_WRITE_ENABLED 0
 #endif
 
 #define QSPI_PRESCALER_VALUE ((BOARD_HCLK_HZ / QSPI_TARGET_HZ) - 1UL)
 #define QSPI_TIMEOUT_LOOPS 8000000UL
-#define QSPI_DMA_MAX_WORDS 0xFFFFUL
+#define QSPI_DMA_MAX_TRANSFER_COUNT 0xFFFFUL
 
 typedef enum {
     QSPI_ASYNC_IDLE = 0,
@@ -50,6 +50,9 @@ static volatile BoardStatus qspi_dma_status = BOARD_OK;
 
 static volatile QspiAsyncState qspi_poll_state = QSPI_ASYNC_IDLE;
 static volatile BoardStatus qspi_poll_status = BOARD_OK;
+
+static QspiDebugSnapshot qspi_dma_timeout_snapshot;
+static uint8_t qspi_dma_timeout_snapshot_valid = 0U;
 
 static BoardStatus qspi_wait_not_busy(void) {
     uint32_t timeout = QSPI_TIMEOUT_LOOPS;
@@ -246,8 +249,6 @@ static BoardStatus qspi_validate_data_command(const QspiCommand* command,
 }
 
 static uint8_t qspi_dma_transfer_is_valid(const void* buffer, size_t size) {
-    size_t words;
-
     if (buffer == 0) {
         return 0U;
     }
@@ -260,13 +261,11 @@ static uint8_t qspi_dma_transfer_is_valid(const void* buffer, size_t size) {
         return 0U;
     }
 
-    words = size / 4U;
-
-    if (words == 0U) {
+    if (size == 0U) {
         return 0U;
     }
 
-    if (words > QSPI_DMA_MAX_WORDS) {
+    if (size > QSPI_DMA_MAX_TRANSFER_COUNT) {
         return 0U;
     }
 
@@ -299,7 +298,53 @@ static void qspi_dma_configure_request(void) {
     DMA1_CSELR->CSELR |= 5UL << 16U;
 }
 
+static void qspi_debug_fill_snapshot(QspiDebugSnapshot* snapshot) {
+    snapshot->qspi_cr = QUADSPI->CR;
+    snapshot->qspi_dcr = QUADSPI->DCR;
+    snapshot->qspi_sr = QUADSPI->SR;
+    snapshot->qspi_fcr = QUADSPI->FCR;
+    snapshot->qspi_dlr = QUADSPI->DLR;
+    snapshot->qspi_ccr = QUADSPI->CCR;
+    snapshot->qspi_ar = QUADSPI->AR;
+    snapshot->qspi_abr = QUADSPI->ABR;
+
+    snapshot->dma_isr = DMA1->ISR;
+    snapshot->dma_ccr = DMA1_Channel5->CCR;
+    snapshot->dma_cndtr = DMA1_Channel5->CNDTR;
+    snapshot->dma_cpar = DMA1_Channel5->CPAR;
+    snapshot->dma_cmar = DMA1_Channel5->CMAR;
+    snapshot->dma_cselr = DMA1_CSELR->CSELR;
+
+    snapshot->dma_state = (uint32_t)qspi_dma_state;
+    snapshot->dma_status = (uint32_t)qspi_dma_status;
+    snapshot->poll_state = (uint32_t)qspi_poll_state;
+    snapshot->poll_status = (uint32_t)qspi_poll_status;
+
+    snapshot->qspi_flag_busy = ((snapshot->qspi_sr & QUADSPI_SR_BUSY) != 0U) ? 1U : 0U;
+    snapshot->qspi_flag_tcf = ((snapshot->qspi_sr & QUADSPI_SR_TCF) != 0U) ? 1U : 0U;
+    snapshot->qspi_flag_ftf = ((snapshot->qspi_sr & QUADSPI_SR_FTF) != 0U) ? 1U : 0U;
+    snapshot->qspi_flag_tef = ((snapshot->qspi_sr & QUADSPI_SR_TEF) != 0U) ? 1U : 0U;
+    snapshot->qspi_flag_tof = ((snapshot->qspi_sr & QUADSPI_SR_TOF) != 0U) ? 1U : 0U;
+    snapshot->qspi_flag_smf = ((snapshot->qspi_sr & QUADSPI_SR_SMF) != 0U) ? 1U : 0U;
+    snapshot->qspi_flevel = (snapshot->qspi_sr & QUADSPI_SR_FLEVEL) >> QUADSPI_SR_FLEVEL_Pos;
+
+    snapshot->qspi_cr_dmaen = ((snapshot->qspi_cr & QUADSPI_CR_DMAEN) != 0U) ? 1U : 0U;
+    snapshot->qspi_cr_tcie = ((snapshot->qspi_cr & QUADSPI_CR_TCIE) != 0U) ? 1U : 0U;
+    snapshot->qspi_cr_teie = ((snapshot->qspi_cr & QUADSPI_CR_TEIE) != 0U) ? 1U : 0U;
+
+    snapshot->dma_ccr_en = ((snapshot->dma_ccr & DMA_CCR_EN) != 0U) ? 1U : 0U;
+    snapshot->dma_isr_tcif = ((snapshot->dma_isr & DMA_ISR_TCIF5) != 0U) ? 1U : 0U;
+    snapshot->dma_isr_teif = ((snapshot->dma_isr & DMA_ISR_TEIF5) != 0U) ? 1U : 0U;
+}
+
+static void qspi_dma_capture_timeout_snapshot(void) {
+    qspi_debug_fill_snapshot(&qspi_dma_timeout_snapshot);
+    qspi_dma_timeout_snapshot_valid = 1U;
+}
+
 static void qspi_dma_abort(void) {
+    qspi_dma_capture_timeout_snapshot();
+
     qspi_dma_disable_channel();
 
     QUADSPI->CR &= ~(QUADSPI_CR_DMAEN |
@@ -321,8 +366,9 @@ static BoardStatus qspi_dma_start_transfer(const QspiCommand* command,
                                            size_t size,
                                            QspiDmaDirection direction) {
     BoardStatus status;
-    uint32_t word_count;
+    uint32_t byte_count;
     uint32_t ccr;
+    uint32_t functional_mode;
 
     status = qspi_validate_data_command(command, buffer, size);
     if (status != BOARD_OK) {
@@ -347,7 +393,7 @@ static BoardStatus qspi_dma_start_transfer(const QspiCommand* command,
         return status;
     }
 
-    word_count = (uint32_t)(size / 4U);
+    byte_count = (uint32_t)size;
 
     qspi_disable_transfer_control();
     qspi_clear_flags();
@@ -356,17 +402,18 @@ static BoardStatus qspi_dma_start_transfer(const QspiCommand* command,
 
     DMA1_Channel5->CPAR = (uint32_t)(uintptr_t)&QUADSPI->DR;
     DMA1_Channel5->CMAR = (uint32_t)(uintptr_t)buffer;
-    DMA1_Channel5->CNDTR = word_count;
+    DMA1_Channel5->CNDTR = byte_count;
 
     ccr = DMA_CCR_MINC |
         DMA_CCR_PL_1 |
         DMA_CCR_TCIE |
-        DMA_CCR_TEIE |
-        (2UL << DMA_CCR_MSIZE_Pos) |
-        (2UL << DMA_CCR_PSIZE_Pos);
+        DMA_CCR_TEIE;
 
     if (direction == QSPI_DMA_DIRECTION_WRITE) {
         ccr |= DMA_CCR_DIR;
+        functional_mode = 0U;
+    } else {
+        functional_mode = 1U;
     }
 
     DMA1_Channel5->CCR = ccr;
@@ -376,37 +423,18 @@ static BoardStatus qspi_dma_start_transfer(const QspiCommand* command,
     qspi_dma_state = QSPI_ASYNC_BUSY;
     qspi_dma_status = BOARD_OK;
 
-    if (direction == QSPI_DMA_DIRECTION_WRITE) {
-        status = qspi_start_command(command, 0U);
-        if (status != BOARD_OK) {
-            qspi_dma_state = QSPI_ASYNC_IDLE;
-            return status;
-        }
-
-        DMA1_Channel5->CCR |= DMA_CCR_EN;
-
-        QUADSPI->CR |= QUADSPI_CR_DMAEN |
-            QUADSPI_CR_TCIE |
-            QUADSPI_CR_TEIE;
-
-        return BOARD_OK;
+    status = qspi_start_command(command, functional_mode);
+    if (status != BOARD_OK) {
+        qspi_dma_state = QSPI_ASYNC_IDLE;
+        qspi_dma_status = status;
+        return status;
     }
+
+    DMA1_Channel5->CCR |= DMA_CCR_EN;
 
     QUADSPI->CR |= QUADSPI_CR_DMAEN |
         QUADSPI_CR_TCIE |
         QUADSPI_CR_TEIE;
-
-    DMA1_Channel5->CCR |= DMA_CCR_EN;
-
-    status = qspi_start_command(command, 1U);
-    if (status != BOARD_OK) {
-        qspi_dma_disable_channel();
-        QUADSPI->CR &= ~(QUADSPI_CR_DMAEN |
-            QUADSPI_CR_TCIE |
-            QUADSPI_CR_TEIE);
-        qspi_dma_state = QSPI_ASYNC_IDLE;
-        return status;
-    }
 
     return BOARD_OK;
 }
@@ -489,15 +517,36 @@ static void qspi_dma_process_qspi_flags(void) {
 }
 
 static BoardStatus qspi_dma_poll_internal(uint8_t* is_done) {
+    static QspiAsyncState timeout_state = QSPI_ASYNC_IDLE;
+    static uint32_t timeout = 0U;
+
     if (is_done == 0) {
         return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (qspi_dma_state != timeout_state) {
+        timeout_state = qspi_dma_state;
+        timeout = QSPI_TIMEOUT_LOOPS;
     }
 
     qspi_dma_process_dma_flags();
     qspi_dma_process_qspi_flags();
 
+    if (qspi_dma_state != timeout_state) {
+        timeout_state = qspi_dma_state;
+        timeout = QSPI_TIMEOUT_LOOPS;
+    }
+
     if ((qspi_dma_state == QSPI_ASYNC_BUSY) ||
         (qspi_dma_state == QSPI_ASYNC_WAIT_TCF)) {
+        if (timeout == 0U) {
+            qspi_dma_abort();
+            timeout_state = QSPI_ASYNC_IDLE;
+            *is_done = 1U;
+            return BOARD_ERR_TIMEOUT;
+        }
+
+        --timeout;
         *is_done = 0U;
         return BOARD_OK;
     }
@@ -505,10 +554,12 @@ static BoardStatus qspi_dma_poll_internal(uint8_t* is_done) {
     if (qspi_dma_state == QSPI_ASYNC_DONE) {
         *is_done = 1U;
         qspi_dma_state = QSPI_ASYNC_IDLE;
+        timeout_state = QSPI_ASYNC_IDLE;
         return qspi_dma_status;
     }
 
     *is_done = 1U;
+    timeout_state = QSPI_ASYNC_IDLE;
 
     return qspi_dma_status;
 }
@@ -684,7 +735,7 @@ BoardStatus qspi_init(void) {
         (QSPI_CHIP_SELECT_HIGH_TIME << QUADSPI_DCR_CSHT_Pos);
 
     cr = (QSPI_PRESCALER_VALUE << QUADSPI_CR_PRESCALER_Pos) |
-        (3UL << QUADSPI_CR_FTHRES_Pos);
+        (0UL << QUADSPI_CR_FTHRES_Pos);
 
 #if (QSPI_SAMPLE_SHIFT != 0)
     cr |= QUADSPI_CR_SSHIFT;
@@ -1016,26 +1067,18 @@ BoardStatus qspi_debug_snapshot(QspiDebugSnapshot* snapshot) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    snapshot->qspi_cr = QUADSPI->CR;
-    snapshot->qspi_dcr = QUADSPI->DCR;
-    snapshot->qspi_sr = QUADSPI->SR;
-    snapshot->qspi_fcr = QUADSPI->FCR;
-    snapshot->qspi_dlr = QUADSPI->DLR;
-    snapshot->qspi_ccr = QUADSPI->CCR;
-    snapshot->qspi_ar = QUADSPI->AR;
-    snapshot->qspi_abr = QUADSPI->ABR;
+    qspi_debug_fill_snapshot(snapshot);
 
-    snapshot->dma_isr = DMA1->ISR;
-    snapshot->dma_ccr = DMA1_Channel5->CCR;
-    snapshot->dma_cndtr = DMA1_Channel5->CNDTR;
-    snapshot->dma_cpar = DMA1_Channel5->CPAR;
-    snapshot->dma_cmar = DMA1_Channel5->CMAR;
-    snapshot->dma_cselr = DMA1_CSELR->CSELR;
+    return BOARD_OK;
+}
 
-    snapshot->dma_state = (uint32_t)qspi_dma_state;
-    snapshot->dma_status = (uint32_t)qspi_dma_status;
-    snapshot->poll_state = (uint32_t)qspi_poll_state;
-    snapshot->poll_status = (uint32_t)qspi_poll_status;
+BoardStatus qspi_debug_last_dma_timeout(QspiDebugSnapshot* snapshot, uint8_t* is_valid) {
+    if ((snapshot == 0) || (is_valid == 0)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *snapshot = qspi_dma_timeout_snapshot;
+    *is_valid = qspi_dma_timeout_snapshot_valid;
 
     return BOARD_OK;
 }

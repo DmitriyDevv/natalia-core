@@ -38,6 +38,14 @@ option(NATALIA_ENABLE_USB_DEVICE_DRIVER
         "Build USB Device driver"
         OFF)
 
+option(NATALIA_USB_CLOCK_SOURCE_HSI48_CRS
+        "Use HSI48 with CRS as USB 48 MHz clock"
+        OFF)
+
+option(NATALIA_USB_CLOCK_SOURCE_HSE8_PLLSAI1
+        "Use HSE 8 MHz with PLLSAI1Q as USB 48 MHz clock"
+        OFF)
+
 option(NATALIA_ENABLE_NAND_DRIVER
         "Build NAND driver"
         OFF)
@@ -58,7 +66,7 @@ option(NATALIA_ENABLE_BOARD_TEST_HOOKS
         "Enable temporary board test hooks"
         OFF)
 
-set(NATALIA_QSPI_TARGET_HZ "100000" CACHE STRING
+set(NATALIA_QSPI_TARGET_HZ "40000000" CACHE STRING
         "QUADSPI target clock frequency"
 )
 
@@ -148,6 +156,26 @@ if (NATALIA_BUILD_TESTS AND NOT NATALIA_USE_BOARD_STUBS)
     )
 endif()
 
+if (NATALIA_BUILD_TESTS AND NATALIA_ENABLE_USB_DEVICE_DRIVER)
+    message(FATAL_ERROR
+            "NATALIA_ENABLE_USB_DEVICE_DRIVER is available only for firmware builds"
+    )
+endif()
+
+if (NATALIA_USB_CLOCK_SOURCE_HSI48_CRS AND NATALIA_USB_CLOCK_SOURCE_HSE8_PLLSAI1)
+    message(FATAL_ERROR
+            "Select only one USB clock source"
+    )
+endif()
+
+if (NATALIA_ENABLE_USB_DEVICE_DRIVER AND
+        NOT NATALIA_USB_CLOCK_SOURCE_HSI48_CRS AND
+        NOT NATALIA_USB_CLOCK_SOURCE_HSE8_PLLSAI1)
+    message(FATAL_ERROR
+            "NATALIA_ENABLE_USB_DEVICE_DRIVER requires one USB clock source"
+    )
+endif()
+
 # -----------------------------------------------------------------------------
 # Desktop tests
 # -----------------------------------------------------------------------------
@@ -165,12 +193,21 @@ endif()
 add_subdirectory(Drivers/CMSIS)
 add_subdirectory(Core)
 add_subdirectory(Device)
+if (NATALIA_ENABLE_USB_DEVICE_DRIVER)
+    add_subdirectory(Drivers/USB_Device)
+endif()
 add_subdirectory(BSP)
 add_subdirectory(Drivers)
 
 if (TARGET natalia_board_api_impl AND TARGET natalia_nand)
     target_link_libraries(natalia_board_api_impl PUBLIC
             natalia_nand
+    )
+endif()
+
+if (TARGET natalia_board_api_impl AND TARGET natalia_ped_reg)
+    target_link_libraries(natalia_board_api_impl PUBLIC
+            natalia_ped_reg
     )
 endif()
 

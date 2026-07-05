@@ -10,6 +10,14 @@
 #include "nand_storage.h"
 #include "qspi.h"
 #endif
+#if defined(NATALIA_ENABLE_USB_DEVICE_DRIVER) && (NATALIA_ENABLE_USB_DEVICE_DRIVER != 0) && \
+(!defined(NATALIA_ENABLE_BOARD_TEST_HOOKS) || (NATALIA_ENABLE_BOARD_TEST_HOOKS == 0))
+#include "usb_cdc.h"
+#endif
+
+#if defined(NATALIA_ENABLE_PED_REG_DRIVER) && (NATALIA_ENABLE_PED_REG_DRIVER != 0)
+#include "ped_reg.h"
+#endif
 
 #ifndef NATALIA_NAND_PS_OFF_LEVEL
 #define NATALIA_NAND_PS_OFF_LEVEL 1
@@ -53,11 +61,38 @@ BoardStatus board_init_hardware(void) {
         return status;
     }
 
-    return rtc_init();
+    status = rtc_init();
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+#if defined(NATALIA_ENABLE_PED_REG_DRIVER) && (NATALIA_ENABLE_PED_REG_DRIVER != 0)
+    status = ped_reg_init();
+    if (status != BOARD_OK) {
+        return status;
+    }
+#endif
+
+#if defined(NATALIA_ENABLE_USB_DEVICE_DRIVER) && (NATALIA_ENABLE_USB_DEVICE_DRIVER != 0) && \
+(!defined(NATALIA_ENABLE_BOARD_TEST_HOOKS) || (NATALIA_ENABLE_BOARD_TEST_HOOKS == 0))
+    status = usb_cdc_init();
+    if (status != BOARD_OK) {
+        return status;
+    }
+#endif
+
+    return BOARD_OK;
 }
 
 BoardStatus board_enter_safe_config(void) {
     BoardStatus status;
+
+#if defined(NATALIA_ENABLE_USB_DEVICE_DRIVER) && \
+(NATALIA_ENABLE_USB_DEVICE_DRIVER != 0) && \
+(!defined(NATALIA_ENABLE_BOARD_TEST_HOOKS) || \
+(NATALIA_ENABLE_BOARD_TEST_HOOKS == 0))
+    (void)usb_cdc_deinit();
+#endif
 
     status = board_startup_io_init();
 
@@ -908,7 +943,7 @@ BoardStatus board_ped_power_off(void) {
     return BOARD_OK;
 }
 
-BoardStatus board_ped_is_powered(uint8_t *is_powered) {
+BoardStatus board_ped_is_powered(uint8_t* is_powered) {
     if (is_powered == 0) {
         return BOARD_ERR_INVALID_ARG;
     }
@@ -922,7 +957,7 @@ BoardStatus board_ped_reg_init(void) {
     return BOARD_OK;
 }
 
-BoardStatus board_ped_read_status(uint32_t *status) {
+BoardStatus board_ped_read_status(uint32_t* status) {
     if (status == 0) {
         return BOARD_ERR_INVALID_ARG;
     }
@@ -932,7 +967,7 @@ BoardStatus board_ped_read_status(uint32_t *status) {
     return BOARD_OK;
 }
 
-BoardStatus board_ped_write_config(const void *config, size_t size) {
+BoardStatus board_ped_write_config(const void* config, size_t size) {
     if ((config == 0) && (size > 0U)) {
         return BOARD_ERR_INVALID_ARG;
     }
@@ -940,10 +975,10 @@ BoardStatus board_ped_write_config(const void *config, size_t size) {
     return BOARD_OK;
 }
 
-BoardStatus board_ped_read_event(void *event_buffer,
+BoardStatus board_ped_read_event(void* event_buffer,
                                  size_t buffer_size,
-                                 size_t *bytes_read) {
-    uint8_t *buffer;
+                                 size_t* bytes_read) {
+    uint8_t* buffer;
     size_t index;
     size_t count;
 
@@ -985,6 +1020,50 @@ BoardStatus board_ped_reset_trigger(void) {
     return BOARD_OK;
 }
 
+#elif defined(NATALIA_ENABLE_PED_REG_DRIVER) && (NATALIA_ENABLE_PED_REG_DRIVER != 0)
+
+BoardStatus board_ped_power_on(void) {
+    return ped_reg_power_on();
+}
+
+BoardStatus board_ped_power_off(void) {
+    return ped_reg_power_off();
+}
+
+BoardStatus board_ped_is_powered(uint8_t* is_powered) {
+    return ped_reg_is_powered(is_powered);
+}
+
+BoardStatus board_ped_reg_init(void) {
+    return ped_reg_init();
+}
+
+BoardStatus board_ped_read_status(uint32_t* status) {
+    return ped_reg_read_status(status);
+}
+
+BoardStatus board_ped_write_config(const void* config, size_t size) {
+    return ped_reg_write_config(config, size);
+}
+
+BoardStatus board_ped_read_event(void* event_buffer,
+                                 size_t buffer_size,
+                                 size_t* bytes_read) {
+    return ped_reg_read_event(event_buffer, buffer_size, bytes_read);
+}
+
+BoardStatus board_ped_set_inhibit(uint8_t enabled) {
+    return ped_reg_set_inhibit(enabled);
+}
+
+BoardStatus board_ped_set_sleep(uint8_t enabled) {
+    return ped_reg_set_sleep(enabled);
+}
+
+BoardStatus board_ped_reset_trigger(void) {
+    return ped_reg_reset_trigger();
+}
+
 #else
 
 BoardStatus board_ped_power_on(void) {
@@ -995,7 +1074,7 @@ BoardStatus board_ped_power_off(void) {
     return BOARD_ERR_UNSUPPORTED;
 }
 
-BoardStatus board_ped_is_powered(uint8_t *is_powered) {
+BoardStatus board_ped_is_powered(uint8_t* is_powered) {
     if (is_powered == 0) {
         return BOARD_ERR_INVALID_ARG;
     }
@@ -1009,7 +1088,7 @@ BoardStatus board_ped_reg_init(void) {
     return BOARD_ERR_UNSUPPORTED;
 }
 
-BoardStatus board_ped_read_status(uint32_t *status) {
+BoardStatus board_ped_read_status(uint32_t* status) {
     if (status == 0) {
         return BOARD_ERR_INVALID_ARG;
     }
@@ -1019,16 +1098,16 @@ BoardStatus board_ped_read_status(uint32_t *status) {
     return BOARD_ERR_UNSUPPORTED;
 }
 
-BoardStatus board_ped_write_config(const void *config, size_t size) {
+BoardStatus board_ped_write_config(const void* config, size_t size) {
     (void)config;
     (void)size;
 
     return BOARD_ERR_UNSUPPORTED;
 }
 
-BoardStatus board_ped_read_event(void *event_buffer,
+BoardStatus board_ped_read_event(void* event_buffer,
                                  size_t buffer_size,
-                                 size_t *bytes_read) {
+                                 size_t* bytes_read) {
     (void)event_buffer;
     (void)buffer_size;
 
@@ -1188,6 +1267,17 @@ BoardStatus board_usb_is_ready(uint8_t *is_ready) {
     *is_ready = 1U;
 
     return BOARD_OK;
+}
+
+#elif defined(NATALIA_ENABLE_USB_DEVICE_DRIVER) && \
+      (NATALIA_ENABLE_USB_DEVICE_DRIVER != 0)
+
+BoardStatus board_usb_write(const void *buffer, size_t size, size_t *bytes_written) {
+    return usb_cdc_write(buffer, size, bytes_written);
+}
+
+BoardStatus board_usb_is_ready(uint8_t *is_ready) {
+    return usb_cdc_is_ready(is_ready);
 }
 
 #else

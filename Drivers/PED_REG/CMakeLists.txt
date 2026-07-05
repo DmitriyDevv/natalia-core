@@ -1,6 +1,5 @@
 add_library(natalia_ped_reg STATIC
         src/ped_reg.c
-        src/ped_reg_config.c
 )
 
 target_include_directories(natalia_ped_reg PUBLIC
@@ -20,6 +19,7 @@ target_compile_options(natalia_ped_reg PRIVATE
         -Wpedantic
         -Wshadow
         -Wconversion
+        -Wdouble-promotion
         -Wmissing-prototypes
         -Wstrict-prototypes
         -ffunction-sections

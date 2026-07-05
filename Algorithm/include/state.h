@@ -21,7 +21,6 @@ typedef enum {
 } SystemState;
 
 typedef enum {
-    // Command events (КУ)
     EVENT_CMD_TELEM_REQ,
     EVENT_CMD_STATUS_REQ,
     EVENT_CMD_SET_TIME,
@@ -36,13 +35,11 @@ typedef enum {
     EVENT_CMD_SHUTDOWN,
     EVENT_CMD_RESET_ALARM,
 
-    // Telemetry events (КТ)
     EVENT_TLM_TIME_SYNC,
     EVENT_TLM_ORBIT,
     EVENT_TLM_ATTITUDE,
     EVENT_TLM_MAGFIELD,
 
-    // Internal events
     EVENT_BOOT,
     EVENT_INIT_DONE,
     EVENT_INIT_FAIL,
@@ -137,21 +134,37 @@ typedef struct {
     PowerAfterDone power_after_done;
     uint32_t start_address;
     uint32_t size;
+    uint32_t requested_packet_count;
+    bool dump_all;
 } CmdDump;
 
 typedef struct {
     NandBank bank;
     PowerAfterDone power_after_done;
+    uint16_t observe_params;
+    uint16_t trigger_config;
     uint32_t acquisition_period_ticks;
+    bool ped_power_enabled;
+    bool ped_sleep_enabled;
+    bool registration_enabled;
+    bool ped_power_after_full;
+    bool ped_sleep_after_full;
 } CmdObserveStart;
 
 typedef struct {
     bool inhibit_enabled;
     bool sleep_enabled;
+    bool ped_power_enabled;
+    bool registration_enabled;
+    uint16_t observe_params;
+    uint16_t trigger_config;
 } CmdObserveCtrl;
 
 typedef struct {
+    NandBank bank;
     PowerAfterDone power_after_done;
+    bool ped_power_enabled;
+    bool ped_sleep_enabled;
 } CmdDuty;
 
 typedef struct {
@@ -162,6 +175,10 @@ typedef struct {
     uint32_t config_id;
 } CmdSetConfig;
 
+typedef struct {
+    NandBank bank;
+} CmdTestResult;
+
 typedef union {
     CmdErase erase;
     CmdTest test;
@@ -171,6 +188,7 @@ typedef union {
     CmdDuty duty;
     CmdSetTime set_time;
     CmdSetConfig set_config;
+    CmdTestResult test_result;
 } CommandPayload;
 
 typedef struct {
@@ -286,6 +304,6 @@ typedef struct {
     ShutdownContext shutdown;
 } SystemContext;
 
-SystemState handle_event(SystemContext *ctx, const SystemEvent *event);
+SystemState handle_event(SystemContext* ctx, const SystemEvent* event);
 
-#endif //NATALIA_CORE_STATE_H
+#endif

@@ -69,6 +69,22 @@ typedef struct {
     uint32_t dma_status;
     uint32_t poll_state;
     uint32_t poll_status;
+
+    uint8_t qspi_flag_busy;
+    uint8_t qspi_flag_tcf;
+    uint8_t qspi_flag_ftf;
+    uint8_t qspi_flag_tef;
+    uint8_t qspi_flag_tof;
+    uint8_t qspi_flag_smf;
+    uint32_t qspi_flevel;
+
+    uint8_t qspi_cr_dmaen;
+    uint8_t qspi_cr_tcie;
+    uint8_t qspi_cr_teie;
+
+    uint8_t dma_ccr_en;
+    uint8_t dma_isr_tcif;
+    uint8_t dma_isr_teif;
 } QspiDebugSnapshot;
 
 BoardStatus qspi_init(void);
@@ -110,5 +126,8 @@ BoardStatus qspi_auto_poll_poll(uint8_t* is_done);
 BoardStatus qspi_is_busy(uint8_t* is_busy);
 
 BoardStatus qspi_debug_snapshot(QspiDebugSnapshot* snapshot);
+
+BoardStatus qspi_debug_last_dma_timeout(QspiDebugSnapshot* snapshot,
+                                        uint8_t* is_valid);
 
 #endif

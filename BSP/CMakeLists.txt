@@ -115,6 +115,57 @@ target_compile_options(natalia_bsp PRIVATE
         -fdata-sections
 )
 
+if (NATALIA_ENABLE_USB_DEVICE_DRIVER)
+    if (NOT TARGET natalia_usb_device)
+        message(FATAL_ERROR
+                "NATALIA_ENABLE_USB_DEVICE_DRIVER requires target natalia_usb_device"
+        )
+    endif()
+
+    add_library(natalia_usb_otg_fs STATIC
+            USB_OTG_FS/src/usb_hw_l4.c
+            USB_OTG_FS/src/usb_cdc.c
+            ${CMAKE_SOURCE_DIR}/Drivers/USB_Device/src/usb_app_simple_cdc.c
+    )
+
+    target_include_directories(natalia_usb_otg_fs PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/USB_OTG_FS/include
+            ${CMAKE_SOURCE_DIR}/Drivers/USB_Device/include
+    )
+
+    target_link_libraries(natalia_usb_otg_fs PUBLIC
+            natalia_core_api
+            natalia_device
+            natalia_bsp
+            natalia_cmsis
+            natalia_usb_device
+    )
+
+    if (NATALIA_USB_CLOCK_SOURCE_HSI48_CRS)
+        target_compile_definitions(natalia_usb_otg_fs PRIVATE
+                NATALIA_USB_CLOCK_SOURCE_HSI48_CRS=1
+                NATALIA_USB_CLOCK_SOURCE_HSE8_PLLSAI1=0
+        )
+    elseif (NATALIA_USB_CLOCK_SOURCE_HSE8_PLLSAI1)
+        target_compile_definitions(natalia_usb_otg_fs PRIVATE
+                NATALIA_USB_CLOCK_SOURCE_HSI48_CRS=0
+                NATALIA_USB_CLOCK_SOURCE_HSE8_PLLSAI1=1
+        )
+    endif()
+
+    target_compile_options(natalia_usb_otg_fs PRIVATE
+            -Wall
+            -Wextra
+            -Wpedantic
+            -Wshadow
+            -Wconversion
+            -Wmissing-prototypes
+            -Wstrict-prototypes
+            -ffunction-sections
+            -fdata-sections
+    )
+endif()
+
 if (NOT NATALIA_USE_BOARD_STUBS)
     add_library(natalia_board_api_impl STATIC
             Board_API/src/board_api.c
@@ -151,6 +202,22 @@ if (NOT NATALIA_USE_BOARD_STUBS)
         )
     endif()
 
+    if (NATALIA_ENABLE_USB_DEVICE_DRIVER)
+        target_compile_definitions(natalia_board_api_impl PRIVATE
+                NATALIA_ENABLE_USB_DEVICE_DRIVER=1
+        )
+
+        target_link_libraries(natalia_board_api_impl PUBLIC
+                natalia_usb_otg_fs
+        )
+    endif()
+
+    if (NATALIA_ENABLE_BOARD_TEST_HOOKS)
+        target_compile_definitions(natalia_board_api_impl PUBLIC
+                NATALIA_ENABLE_BOARD_TEST_HOOKS=1
+        )
+    endif()
+
     target_compile_options(natalia_board_api_impl PRIVATE
             -Wall
             -Wextra
@@ -161,11 +228,5 @@ if (NOT NATALIA_USE_BOARD_STUBS)
             -Wstrict-prototypes
             -ffunction-sections
             -fdata-sections
-    )
-endif()
-
-if(NATALIA_ENABLE_BOARD_TEST_HOOKS)
-    target_compile_definitions(natalia_board_api_impl PUBLIC
-            NATALIA_ENABLE_BOARD_TEST_HOOKS=1
     )
 endif()

@@ -6,6 +6,7 @@ target_sources(natalia_algorithm PRIVATE
         src/state.c
         src/observe.c
         src/mram_store.c
+        src/event_queue.c
 #        src/mode_erase.c
 )
 

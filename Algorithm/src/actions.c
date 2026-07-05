@@ -674,30 +674,9 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
         return ACTION_ERR_CONTENT;
     }
 
-    if (event->command.dump.size == 0U) {
-        return ACTION_ERR_CONTENT;
-    }
-
     if ((event->command.dump.start_address % DUMP_MODE_PACKET_SIZE) != 0U) {
         return ACTION_ERR_CONTENT;
     }
-
-    if ((event->command.dump.size % DUMP_MODE_PACKET_SIZE) != 0U) {
-        return ACTION_ERR_CONTENT;
-    }
-
-    start_packet = event->command.dump.start_address / DUMP_MODE_PACKET_SIZE;
-    packet_count = event->command.dump.size / DUMP_MODE_PACKET_SIZE;
-
-    if (packet_count == 0U) {
-        return ACTION_ERR_CONTENT;
-    }
-
-    if (start_packet > (UINT32_MAX - packet_count)) {
-        return ACTION_ERR_CONTENT;
-    }
-
-    read_limit_packets = start_packet + packet_count;
 
     result = require_ok(board_usb_is_ready(&is_ready));
     if (result != ACTION_OK) {
@@ -734,6 +713,60 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
         cleanup_failed_mode_start(ctx, bank, false);
         return result;
     }
+
+    if (event->command.dump.dump_all) {
+        result = require_ok(board_nand_get_committed_packet_count(bank_id(bank), &packet_count));
+        if (result != ACTION_OK) {
+            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+            cleanup_failed_mode_start(ctx, bank, false);
+            return result;
+        }
+
+        if (packet_count == 0U) {
+            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+            cleanup_failed_mode_start(ctx, bank, false);
+            return ACTION_ERR_CONTENT;
+        }
+
+        if (packet_count > (UINT32_MAX / DUMP_MODE_PACKET_SIZE)) {
+            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+            cleanup_failed_mode_start(ctx, bank, false);
+            return ACTION_ERR_CONTENT;
+        }
+
+        ctx->dump.start_address = 0U;
+        ctx->dump.size = packet_count * DUMP_MODE_PACKET_SIZE;
+        start_packet = 0U;
+    } else {
+        if (event->command.dump.size == 0U) {
+            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+            cleanup_failed_mode_start(ctx, bank, false);
+            return ACTION_ERR_CONTENT;
+        }
+
+        if ((event->command.dump.size % DUMP_MODE_PACKET_SIZE) != 0U) {
+            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+            cleanup_failed_mode_start(ctx, bank, false);
+            return ACTION_ERR_CONTENT;
+        }
+
+        start_packet = event->command.dump.start_address / DUMP_MODE_PACKET_SIZE;
+        packet_count = event->command.dump.size / DUMP_MODE_PACKET_SIZE;
+
+        if (packet_count == 0U) {
+            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+            cleanup_failed_mode_start(ctx, bank, false);
+            return ACTION_ERR_CONTENT;
+        }
+    }
+
+    if (start_packet > (UINT32_MAX - packet_count)) {
+        ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+        cleanup_failed_mode_start(ctx, bank, false);
+        return ACTION_ERR_CONTENT;
+    }
+
+    read_limit_packets = start_packet + packet_count;
 
     result = require_ok(board_nand_open_read(bank_id(bank), read_limit_packets));
     if (result != ACTION_OK) {
