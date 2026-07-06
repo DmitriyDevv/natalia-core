@@ -1,5 +1,6 @@
 add_library(natalia_ped_reg STATIC
         src/ped_reg.c
+        src/ped_reg_irq.c
 )
 
 target_include_directories(natalia_ped_reg PUBLIC

@@ -405,9 +405,7 @@ static BoardStatus qspi_dma_start_transfer(const QspiCommand* command,
     DMA1_Channel5->CNDTR = byte_count;
 
     ccr = DMA_CCR_MINC |
-        DMA_CCR_PL_1 |
-        DMA_CCR_TCIE |
-        DMA_CCR_TEIE;
+        DMA_CCR_PL_1;
 
     if (direction == QSPI_DMA_DIRECTION_WRITE) {
         ccr |= DMA_CCR_DIR;
@@ -432,9 +430,7 @@ static BoardStatus qspi_dma_start_transfer(const QspiCommand* command,
 
     DMA1_Channel5->CCR |= DMA_CCR_EN;
 
-    QUADSPI->CR |= QUADSPI_CR_DMAEN |
-        QUADSPI_CR_TCIE |
-        QUADSPI_CR_TEIE;
+    QUADSPI->CR |= QUADSPI_CR_DMAEN;
 
     return BOARD_OK;
 }
