@@ -34,6 +34,22 @@ option(NATALIA_ENABLE_PED_REG_DRIVER
         "Build PED_REG driver"
         OFF)
 
+option(NATALIA_ENABLE_I2C_DRIVER
+        "Build BSP I2C master driver"
+        OFF)
+
+option(NATALIA_ENABLE_INA219_DRIVER
+        "Build INA219 power monitor driver"
+        OFF)
+
+option(NATALIA_ENABLE_ADC_DRIVER
+        "Build BSP ADC DMA driver"
+        OFF)
+
+option(NATALIA_ENABLE_TC1047_DRIVER
+        "Build TC1047 analog temperature sensor driver"
+        OFF)
+
 option(NATALIA_ENABLE_USB_DEVICE_DRIVER
         "Build USB Device driver"
         OFF)
@@ -118,6 +134,18 @@ endif()
 if (NATALIA_ENABLE_DETECTOR_PROTO_LOG AND NOT NATALIA_ENABLE_UNICAN_DRIVER)
     message(FATAL_ERROR
             "NATALIA_ENABLE_DETECTOR_PROTO_LOG requires NATALIA_ENABLE_UNICAN_DRIVER=ON"
+    )
+endif()
+
+if (NATALIA_ENABLE_INA219_DRIVER AND NOT NATALIA_ENABLE_I2C_DRIVER)
+    message(FATAL_ERROR
+            "NATALIA_ENABLE_INA219_DRIVER requires NATALIA_ENABLE_I2C_DRIVER=ON"
+    )
+endif()
+
+if (NATALIA_ENABLE_TC1047_DRIVER AND NOT NATALIA_ENABLE_ADC_DRIVER)
+    message(FATAL_ERROR
+            "NATALIA_ENABLE_TC1047_DRIVER requires NATALIA_ENABLE_ADC_DRIVER=ON"
     )
 endif()
 
@@ -208,6 +236,22 @@ endif()
 if (TARGET natalia_board_api_impl AND TARGET natalia_ped_reg)
     target_link_libraries(natalia_board_api_impl PUBLIC
             natalia_ped_reg
+    )
+endif()
+
+if (TARGET natalia_board_api_impl AND TARGET natalia_tc1047)
+    target_link_libraries(natalia_board_api_impl PUBLIC
+            natalia_tc1047
+    )
+endif()
+
+if (TARGET natalia_board_api_impl AND TARGET natalia_ina219)
+    target_link_libraries(natalia_board_api_impl PUBLIC
+            natalia_ina219
+    )
+
+    target_compile_definitions(natalia_board_api_impl PRIVATE
+            NATALIA_ENABLE_INA219_DRIVER=1
     )
 endif()
 

@@ -1,3 +1,7 @@
+option(NATALIA_ENABLE_I2C_DRIVER
+        "Build BSP I2C master driver"
+        OFF)
+
 add_library(natalia_bsp STATIC
         GPIO/src/gpio.c
         Board_API/src/board_startup_io.c
@@ -33,6 +37,26 @@ target_compile_definitions(natalia_bsp PUBLIC
         QSPI_TARGET_HZ=${NATALIA_QSPI_TARGET_HZ}
         QSPI_DMA_AUTO_MIN_SIZE=${NATALIA_QSPI_DMA_AUTO_MIN_SIZE}
 )
+
+if (NATALIA_ENABLE_I2C_DRIVER)
+    target_sources(natalia_bsp PRIVATE
+            I2C/src/i2c.c
+    )
+
+    target_compile_definitions(natalia_bsp PUBLIC
+            NATALIA_ENABLE_I2C_DRIVER=1
+    )
+endif()
+
+if (NATALIA_ENABLE_ADC_DRIVER)
+    target_sources(natalia_bsp PRIVATE
+            ADC/src/adc.c
+    )
+
+    target_compile_definitions(natalia_bsp PUBLIC
+            NATALIA_ENABLE_ADC_DRIVER=1
+    )
+endif()
 
 if (NATALIA_QSPI_SAMPLE_SHIFT)
     target_compile_definitions(natalia_bsp PUBLIC
@@ -199,6 +223,12 @@ if (NOT NATALIA_USE_BOARD_STUBS)
     if (NATALIA_ENABLE_NAND_DRIVER)
         target_compile_definitions(natalia_board_api_impl PRIVATE
                 NATALIA_ENABLE_NAND_DRIVER=1
+        )
+    endif()
+
+    if (NATALIA_ENABLE_TC1047_DRIVER)
+        target_compile_definitions(natalia_board_api_impl PRIVATE
+                NATALIA_ENABLE_TC1047_DRIVER=1
         )
     endif()
 

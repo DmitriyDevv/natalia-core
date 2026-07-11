@@ -14,6 +14,32 @@ typedef enum {
     BOARD_SIGNAL_RTC_OUT
 } BoardSignalTarget;
 
+typedef struct {
+    int32_t temperature_milli_c;
+    uint32_t millivolts;
+    uint32_t vdda_mv;
+    uint32_t adc_sequence;
+    uint16_t raw;
+    uint16_t vrefint_raw;
+    uint8_t ready;
+    uint8_t range_valid;
+} BoardTempSample;
+
+typedef enum {
+    BOARD_POWER_MONITOR_PU = 0,
+    BOARD_POWER_MONITOR_PED
+} BoardPowerMonitorId;
+
+typedef struct {
+    uint32_t bus_voltage_mv;
+    int32_t shunt_voltage_uv;
+    int32_t current_ua;
+    uint32_t power_uw;
+    uint8_t conversion_ready;
+    uint8_t math_overflow;
+    uint8_t ready;
+} BoardPowerSample;
+
 BoardStatus board_init_hardware(void);
 BoardStatus board_enter_safe_config(void);
 BoardStatus board_disconnect_signal_lines(BoardSignalTarget target);
@@ -61,6 +87,13 @@ BoardStatus board_ped_reset_trigger(void);
 
 BoardStatus board_rtc_get_time(InstrumentTime* time);
 BoardStatus board_rtc_set_time(const InstrumentTime* time);
+BoardStatus board_rtc_take_1hz_events(uint32_t* event_count);
+
+BoardStatus board_temp_init(void);
+BoardStatus board_temp_start(void);
+BoardStatus board_temp_stop(void);
+BoardStatus board_read_temp(BoardTempSample* sample);
+BoardStatus board_read_temp_milli_c(int32_t* temperature_milli_c);
 
 BoardStatus board_usb_write(const void* buffer, size_t size, size_t* bytes_written);
 BoardStatus board_usb_is_ready(uint8_t* is_ready);
@@ -71,5 +104,7 @@ BoardStatus board_usb_test_capture_get_result(uint32_t* bytes_written, uint32_t*
 #endif
 
 BoardStatus board_read_power_status(uint32_t* power_status);
+BoardStatus board_power_monitor_init(void);
+BoardStatus board_read_power_monitor(BoardPowerMonitorId monitor, BoardPowerSample* sample);
 
 #endif
