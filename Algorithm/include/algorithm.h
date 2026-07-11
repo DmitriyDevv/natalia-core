@@ -4,5 +4,6 @@
 #include "state.h"
 
 void algorithm_poll(SystemContext *ctx);
+void algorithm_process_events(SystemContext *ctx);
 
 #endif // NATALIA_CORE_ALGORITHM_H

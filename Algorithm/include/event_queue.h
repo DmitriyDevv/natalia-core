@@ -7,6 +7,7 @@
 #include "state.h"
 
 void system_event_queue_init(void);
+void system_event_queue_clear(void);
 
 bool system_event_queue_push_back(const SystemEvent* event);
 bool system_event_queue_push_front(const SystemEvent* event);

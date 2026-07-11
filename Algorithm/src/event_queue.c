@@ -78,6 +78,18 @@ void system_event_queue_init(void) {
     event_queue_irq_restore(primask);
 }
 
+void system_event_queue_clear(void) {
+    uint32_t primask;
+
+    primask = event_queue_irq_save();
+
+    system_event_queue.head = 0U;
+    system_event_queue.tail = 0U;
+    system_event_queue.count = 0U;
+
+    event_queue_irq_restore(primask);
+}
+
 bool system_event_queue_push_back(const SystemEvent* event) {
     uint32_t primask;
     bool result = false;

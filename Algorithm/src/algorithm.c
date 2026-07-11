@@ -5,19 +5,20 @@
 
 #include "board_api.h"
 #include "dump_mode_config.h"
+#include "event_queue.h"
 #include "test_mode_config.h"
+
+#ifndef ALGORITHM_EVENTS_PER_POLL
+#define ALGORITHM_EVENTS_PER_POLL (8U)
+#endif
 
 static uint8_t erase_bank_id(NandBank bank) {
     return (uint8_t)bank;
 }
 
 static void finish_erase_step(SystemContext* ctx) {
-    const SystemEvent done_event = {
-        .type = EVENT_ERASE_DONE,
-        .msg_id = 0U
-    };
-
-    (void)handle_event(ctx, &done_event);
+    (void)ctx;
+    (void)system_event_queue_push_back_type(EVENT_ERASE_DONE);
 }
 
 static void erase_mode_wait_step(SystemContext* ctx) {
@@ -83,12 +84,8 @@ static void fill_test_pattern(TestContext* test) {
 }
 
 static void finish_test_step(SystemContext* ctx) {
-    const SystemEvent done_event = {
-        .type = EVENT_TEST_DONE,
-        .msg_id = 0U
-    };
-
-    (void)handle_event(ctx, &done_event);
+    (void)ctx;
+    (void)system_event_queue_push_back_type(EVENT_TEST_DONE);
 }
 
 static void fail_test_step(SystemContext* ctx, uint32_t status_flag) {
@@ -272,12 +269,8 @@ static uint32_t dump_next_packet_size(const DumpContext* dump) {
 }
 
 static void finish_dump_step(SystemContext* ctx) {
-    const SystemEvent done_event = {
-        .type = EVENT_DUMP_DONE,
-        .msg_id = 0U
-    };
-
-    (void)handle_event(ctx, &done_event);
+    (void)ctx;
+    (void)system_event_queue_push_back_type(EVENT_DUMP_DONE);
 }
 
 static void fail_dump_step(SystemContext* ctx) {
@@ -396,12 +389,8 @@ static uint8_t observe_bank_id(NandBank bank) {
 }
 
 static void observe_mode_full_step(SystemContext *ctx) {
-    const SystemEvent full_event = {
-        .type = EVENT_NAND_FULL,
-        .msg_id = 0U
-    };
-
-    (void)handle_event(ctx, &full_event);
+    (void)ctx;
+    (void)system_event_queue_push_back_type(EVENT_NAND_FULL);
 }
 
 static void observe_mode_fail(SystemContext *ctx) {
@@ -476,5 +465,22 @@ void algorithm_poll(SystemContext *ctx) {
         observe_mode_poll(ctx);
     } else if (ctx->state == STATE_DUMP) {
         dump_mode_poll(ctx);
+    }
+}
+
+void algorithm_process_events(SystemContext *ctx) {
+    SystemEvent event;
+    uint32_t processed;
+
+    if (ctx == NULL) {
+        return;
+    }
+
+    for (processed = 0U; processed < ALGORITHM_EVENTS_PER_POLL; ++processed) {
+        if (!system_event_queue_pop(&event)) {
+            break;
+        }
+
+        (void)handle_event(ctx, &event);
     }
 }

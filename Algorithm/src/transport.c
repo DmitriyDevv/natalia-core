@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "event_queue.h"
 #include "unican.h"
 #include "unican_node_addr.h"
 
@@ -981,7 +982,8 @@ static void transport_handle_known_command(SystemContext* ctx,
         return;
     }
 
-    (void)handle_event(ctx, &event);
+    (void)ctx;
+    (void)system_event_queue_push_back(&event);
 }
 
 static void transport_handle_known_telemetry(SystemContext* ctx,
@@ -1021,7 +1023,7 @@ static void transport_handle_known_telemetry(SystemContext* ctx,
         return;
     }
 
-    (void)handle_event(ctx, &event);
+    (void)system_event_queue_push_back(&event);
 }
 
 static bool transport_message_is_for_this_node(const UnicanMessage* message) {

@@ -6,6 +6,7 @@
 #include "can1.h"
 #include "clock.h"
 #include "debug_log.h"
+#include "event_queue.h"
 #include "state.h"
 #include "timebase.h"
 #include "transport.h"
@@ -129,13 +130,8 @@ static void log_mode_stage(const SystemContext* ctx) {
 }
 
 static void send_internal_event(SystemContext* ctx, EventType type) {
-    SystemEvent event;
-
-    (void)memset(&event, 0, sizeof(event));
-    event.type = type;
-    event.msg_id = 0U;
-
-    (void)handle_event(ctx, &event);
+    (void)system_event_queue_push_back_type(type);
+    algorithm_process_events(ctx);
 }
 
 static void init_system_context(SystemContext* ctx) {
@@ -246,6 +242,7 @@ int main(void) {
     debug_log_write("\r\n");
 
     init_system_context(&ctx);
+    system_event_queue_init();
 
     debug_log_write("EVENT_BOOT\r\n");
     send_internal_event(&ctx, EVENT_BOOT);
@@ -281,6 +278,7 @@ int main(void) {
         }
 
         algorithm_poll(&ctx);
+        algorithm_process_events(&ctx);
 
         log_state_change(&ctx, &last_state);
 
