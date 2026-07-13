@@ -1,134 +1,291 @@
 #include <stdint.h>
+#include <string.h>
 
-#include "board_api.h"
+#include "alarm.h"
+#include "algorithm.h"
+#include "can1.h"
 #include "clock.h"
 #include "debug_log.h"
-#include "i2c.h"
-#include "status.h"
+#include "event_queue.h"
+#include "state.h"
 #include "timebase.h"
+#include "transport.h"
+#include "unican.h"
 
-static void log_status(const char* label, BoardStatus status) {
-    debug_log_write(label);
-    debug_log_write("=");
+#define MAIN_STAGE_LOG_INTERVAL_MS (1000UL)
+
+static const char* state_to_string(SystemState state) {
+    switch (state) {
+    case STATE_INIT:
+        return "INIT";
+
+    case STATE_DUTY:
+        return "DUTY";
+
+    case STATE_ERASE:
+        return "ERASE";
+
+    case STATE_TEST:
+        return "TEST";
+
+    case STATE_OBSERVE:
+        return "OBSERVE";
+
+    case STATE_DUMP:
+        return "DUMP";
+
+    case STATE_ALARM:
+        return "ALARM";
+
+    case STATE_SHUTDOWN:
+        return "SHUTDOWN";
+
+    default:
+        return "UNKNOWN";
+    }
+}
+
+static void log_status_code(const char* prefix, BoardStatus status) {
+    debug_log_write(prefix);
     debug_log_write_u32_inline((uint32_t)status);
     debug_log_write("\r\n");
 }
 
-static void log_i32_inline(int32_t value) {
-    uint32_t magnitude;
-
-    if (value < 0) {
-        debug_log_write("-");
-        magnitude = (uint32_t)(-(int64_t)value);
-    } else {
-        magnitude = (uint32_t)value;
-    }
-
-    debug_log_write_u32_inline(magnitude);
+static void log_context_line(const SystemContext* ctx) {
+    debug_log_write("state=");
+    debug_log_write(state_to_string(ctx->state));
+    debug_log_write(" prev=");
+    debug_log_write(state_to_string(ctx->previous_state));
+    debug_log_write(" alarm=");
+    debug_log_write_u32_inline(ctx->alarm_status);
+    debug_log_write(" masked=");
+    debug_log_write_u32_inline(ctx->masked_alarm);
+    debug_log_write("\r\n");
 }
 
-static void log_address_hex(uint8_t address) {
-    static const char hex[] = "0123456789ABCDEF";
-
-    debug_log_write("0x");
-    debug_log_write((char[]){hex[(address >> 4U) & 0x0FU], hex[address & 0x0FU], 0});
-}
-
-static void scan_power_i2c_bus(void) {
-    uint8_t address;
-    uint8_t is_present;
-    BoardStatus status;
-
-    debug_log_write("i2c power scan start\r\n");
-
-    status = i2c_init_bus_speed(I2C_BUS_POWER, I2C_SPEED_100KHZ);
-    log_status("i2c_init_bus_power", status);
-
-    if (status != BOARD_OK) {
+static void log_state_change(const SystemContext* ctx,
+                             SystemState* last_state) {
+    if (ctx->state == *last_state) {
         return;
     }
 
-    for (address = 0x08U; address <= 0x77U; ++address) {
-        is_present = 0U;
+    debug_log_write("STATE ");
+    debug_log_write(state_to_string(*last_state));
+    debug_log_write(" -> ");
+    debug_log_write(state_to_string(ctx->state));
+    debug_log_write("\r\n");
 
-        status = i2c_probe(I2C_BUS_POWER, address, &is_present);
-        if (status != BOARD_OK) {
-            debug_log_write("i2c_probe_error addr=");
-            log_address_hex(address);
-            debug_log_write(" status=");
-            debug_log_write_u32_inline((uint32_t)status);
-            debug_log_write("\r\n");
-        } else if (is_present != 0U) {
-            debug_log_write("i2c_found addr=");
-            log_address_hex(address);
-            debug_log_write("\r\n");
-        }
-    }
+    log_context_line(ctx);
 
-    debug_log_write("i2c power scan done\r\n");
+    *last_state = ctx->state;
 }
 
-static void log_power_sample(const char* name, BoardPowerMonitorId monitor) {
-    BoardPowerSample sample;
-    BoardStatus status;
+static void log_mode_stage(const SystemContext* ctx) {
+    switch (ctx->state) {
+    case STATE_ERASE:
+        debug_log_write("erase_stage=");
+        debug_log_write_u32_inline((uint32_t)ctx->erase.stage);
+        debug_log_write(" bank=");
+        debug_log_write_u32_inline((uint32_t)ctx->erase.bank);
+        debug_log_write("\r\n");
+        break;
 
-    status = board_read_power_monitor(monitor, &sample);
+    case STATE_TEST:
+        debug_log_write("test_stage=");
+        debug_log_write_u32_inline((uint32_t)ctx->test.stage);
+        debug_log_write(" bank=");
+        debug_log_write_u32_inline((uint32_t)ctx->test.bank);
+        debug_log_write(" block=");
+        debug_log_write_u32_inline(ctx->test.block_index);
+        debug_log_write(" errors=");
+        debug_log_write_u32_inline(ctx->test.total_errors);
+        debug_log_write("\r\n");
+        break;
 
-    debug_log_write(name);
-    debug_log_write(" status=");
-    debug_log_write_u32_inline((uint32_t)status);
+    case STATE_DUMP:
+        debug_log_write("dump_stage=");
+        debug_log_write_u32_inline((uint32_t)ctx->dump.stage);
+        debug_log_write(" bank=");
+        debug_log_write_u32_inline((uint32_t)ctx->dump.bank);
+        debug_log_write(" bytes=");
+        debug_log_write_u32_inline(ctx->dump.bytes_done);
+        debug_log_write(" size=");
+        debug_log_write_u32_inline(ctx->dump.size);
+        debug_log_write("\r\n");
+        break;
 
-    if (status == BOARD_OK) {
-        debug_log_write(" ready=");
-        debug_log_write_u32_inline((uint32_t)sample.ready);
+    case STATE_OBSERVE:
+        debug_log_write("observe_stage=");
+        debug_log_write_u32_inline((uint32_t)ctx->observe.stage);
+        debug_log_write(" bank=");
+        debug_log_write_u32_inline((uint32_t)ctx->observe.bank);
+        debug_log_write(" packets=");
+        debug_log_write_u32_inline(ctx->observe.committed_packet_count);
+        debug_log_write("\r\n");
+        break;
 
-        debug_log_write(" bus_mv=");
-        debug_log_write_u32_inline(sample.bus_voltage_mv);
+    default:
+        break;
+    }
+}
 
-        debug_log_write(" shunt_uv=");
-        log_i32_inline(sample.shunt_voltage_uv);
+static void send_internal_event(SystemContext* ctx, EventType type) {
+    (void)system_event_queue_push_back_type(type);
+    algorithm_process_events(ctx);
+}
 
-        debug_log_write(" current_ua=");
-        log_i32_inline(sample.current_ua);
+static void init_system_context(SystemContext* ctx) {
+    (void)memset(ctx, 0, sizeof(*ctx));
 
-        debug_log_write(" power_uw=");
-        debug_log_write_u32_inline(sample.power_uw);
+    ctx->state = STATE_INIT;
+    ctx->previous_state = STATE_INIT;
 
-        debug_log_write(" cnvr=");
-        debug_log_write_u32_inline((uint32_t)sample.conversion_ready);
+    ctx->alarm_status = 0U;
+    ctx->alarm_mask = ALARM_ALL_MASK;
+    ctx->masked_alarm = 0U;
 
-        debug_log_write(" ovf=");
-        debug_log_write_u32_inline((uint32_t)sample.math_overflow);
+    ctx->nand1.bank = NAND_BANK_1;
+    ctx->nand2.bank = NAND_BANK_2;
+
+    ctx->test.failed_address = TEST_MODE_FAILED_ADDRESS_NONE;
+}
+
+static void log_can_stats_periodic(uint32_t* last_log_ms) {
+    uint32_t now_ms;
+    Can1Stats stats;
+
+    now_ms = timebase_millis();
+
+    if (!timebase_elapsed(*last_log_ms, 5000UL)) {
+        return;
     }
 
+    *last_log_ms = now_ms;
+
+    can1_get_stats(&stats);
+
+    debug_log_write("can rx=");
+    debug_log_write_u32_inline(stats.rx_received);
+    debug_log_write(" drop=");
+    debug_log_write_u32_inline(stats.rx_dropped);
+    debug_log_write(" txq=");
+    debug_log_write_u32_inline(stats.tx_queued);
+    debug_log_write(" txc=");
+    debug_log_write_u32_inline(stats.tx_completed);
+    debug_log_write(" txf=");
+    debug_log_write_u32_inline(stats.tx_failed);
+    debug_log_write(" boff=");
+    debug_log_write_u32_inline(stats.bus_off_events);
+    debug_log_write("\r\n");
+}
+
+static void log_unican_stats_periodic(uint32_t* last_log_ms) {
+    uint32_t now_ms;
+    UnicanStatus status;
+
+    now_ms = timebase_millis();
+
+    if (!timebase_elapsed(*last_log_ms, 5000UL)) {
+        return;
+    }
+
+    *last_log_ms = now_ms;
+
+    unican_get_status(&status);
+
+    debug_log_write("unican online=");
+    debug_log_write_u32_inline(status.is_online ? 1UL : 0UL);
+    debug_log_write(" tx_busy=");
+    debug_log_write_u32_inline(status.tx_busy ? 1UL : 0UL);
+    debug_log_write(" rx_ok=");
+    debug_log_write_u32_inline(status.rx_messages_ok);
+    debug_log_write(" tx_ok=");
+    debug_log_write_u32_inline(status.tx_messages_ok);
+    debug_log_write(" tx_fail=");
+    debug_log_write_u32_inline(status.tx_messages_failed);
+    debug_log_write(" drop=");
+    debug_log_write_u32_inline(status.dropped_messages);
     debug_log_write("\r\n");
 }
 
 int main(void) {
+    SystemContext ctx;
+    SystemState last_state;
     BoardStatus status;
+    BoardStatus last_transport_status;
+    uint32_t now_ms;
+    uint32_t last_stage_log_ms;
+    uint32_t last_can_log_ms;
+    uint32_t last_unican_log_ms;
 
-    clock_init();
-    timebase_init();
-
-    status = debug_log_init();
-
-    if (status == BOARD_OK) {
-        debug_log_write("\r\nina219 test start\r\n");
+    status = clock_init();
+    if (status != BOARD_OK) {
+        while (1) {}
     }
 
-    status = board_init_hardware();
-    log_status("board_init_hardware", status);
+    status = timebase_init();
+    if (status != BOARD_OK) {
+        while (1) {}
+    }
 
-    scan_power_i2c_bus();
+    (void)debug_log_init();
 
-    status = board_power_monitor_init();
-    log_status("board_power_monitor_init", status);
+    debug_log_write("\r\nNATALIA CAN TEST MAIN\r\n");
+    debug_log_write("sysclk=");
+    debug_log_write_u32_inline(clock_get_sysclk_hz());
+    debug_log_write(" hclk=");
+    debug_log_write_u32_inline(clock_get_hclk_hz());
+    debug_log_write(" pclk1=");
+    debug_log_write_u32_inline(clock_get_pclk1_hz());
+    debug_log_write(" pclk2=");
+    debug_log_write_u32_inline(clock_get_pclk2_hz());
+    debug_log_write("\r\n");
+
+    init_system_context(&ctx);
+    system_event_queue_init();
+
+    debug_log_write("EVENT_BOOT\r\n");
+    send_internal_event(&ctx, EVENT_BOOT);
+    log_context_line(&ctx);
+
+    status = board_comm_init();
+    if (status != BOARD_OK) {
+        log_status_code("board_comm_init error=", status);
+        while (1) {}
+    }
+
+    debug_log_write("EVENT_INIT_DONE\r\n");
+    send_internal_event(&ctx, EVENT_INIT_DONE);
+    log_context_line(&ctx);
+
+    last_state = ctx.state;
+    last_transport_status = BOARD_OK;
+    last_stage_log_ms = timebase_millis();
+    last_can_log_ms = timebase_millis();
+    last_unican_log_ms = timebase_millis();
+
+    debug_log_write("READY\r\n");
 
     while (1) {
-        log_power_sample("PU", BOARD_POWER_MONITOR_PU);
-        log_power_sample("PED", BOARD_POWER_MONITOR_PED);
-        debug_log_write("\r\n");
+        now_ms = timebase_millis();
 
-        timebase_delay_ms_blocking(1000U);
+        status = transport_poll(&ctx, now_ms);
+        if (status != last_transport_status) {
+            log_status_code("transport_status=", status);
+            last_transport_status = status;
+        }
+
+        algorithm_poll(&ctx);
+        algorithm_process_events(&ctx);
+
+        log_state_change(&ctx, &last_state);
+
+        if (timebase_elapsed(last_stage_log_ms, MAIN_STAGE_LOG_INTERVAL_MS)) {
+            last_stage_log_ms = now_ms;
+            log_mode_stage(&ctx);
+        }
+
+        log_can_stats_periodic(&last_can_log_ms);
+        log_unican_stats_periodic(&last_unican_log_ms);
     }
 }

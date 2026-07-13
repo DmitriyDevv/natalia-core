@@ -207,7 +207,6 @@ static SystemState handle_duty_event(SystemContext* ctx, const SystemEvent* even
     // 115
     case EVENT_TLM_TIME_SYNC:
     case EVENT_TLM_ORBIT:
-    case EVENT_TLM_ATTITUDE:
     case EVENT_TLM_MAGFIELD:
         return ctx->state;
 
@@ -283,7 +282,6 @@ static SystemState handle_erase_event(SystemContext* ctx, const SystemEvent* eve
     // 205
     case EVENT_TLM_TIME_SYNC:
     case EVENT_TLM_ORBIT:
-    case EVENT_TLM_ATTITUDE:
     case EVENT_TLM_MAGFIELD:
         return ctx->state;
 
@@ -357,7 +355,6 @@ static SystemState handle_test_event(SystemContext* ctx, const SystemEvent* even
     // 305
     case EVENT_TLM_TIME_SYNC:
     case EVENT_TLM_ORBIT:
-    case EVENT_TLM_ATTITUDE:
     case EVENT_TLM_MAGFIELD:
         return ctx->state;
 
@@ -413,11 +410,6 @@ static SystemState handle_observe_event(SystemContext* ctx, const SystemEvent* e
     // 406
     case EVENT_TLM_ORBIT:
         (void)action_accept_orbit(ctx, event);
-        return ctx->state;
-
-    // 407
-    case EVENT_TLM_ATTITUDE:
-        (void)action_accept_attitude(ctx, event);
         return ctx->state;
 
     // 408
@@ -531,7 +523,6 @@ static SystemState handle_dump_event(SystemContext* ctx, const SystemEvent* even
     // 505
     case EVENT_TLM_TIME_SYNC:
     case EVENT_TLM_ORBIT:
-    case EVENT_TLM_ATTITUDE:
     case EVENT_TLM_MAGFIELD:
         return ctx->state;
 
@@ -625,7 +616,6 @@ static SystemState handle_alarm_event(SystemContext* ctx, const SystemEvent* eve
     // 608
     case EVENT_TLM_TIME_SYNC:
     case EVENT_TLM_ORBIT:
-    case EVENT_TLM_ATTITUDE:
     case EVENT_TLM_MAGFIELD:
         return ctx->state;
 
@@ -670,7 +660,6 @@ static SystemState handle_shutdown_event(SystemContext* ctx, const SystemEvent* 
     // 702
     case EVENT_TLM_TIME_SYNC:
     case EVENT_TLM_ORBIT:
-    case EVENT_TLM_ATTITUDE:
     case EVENT_TLM_MAGFIELD:
         return ctx->state;
 

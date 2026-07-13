@@ -24,6 +24,11 @@
 #include "ina219_config.h"
 #endif
 
+#if defined(NATALIA_ENABLE_UNICAN_DRIVER) && (NATALIA_ENABLE_UNICAN_DRIVER != 0)
+#include "can1.h"
+#include "unican.h"
+#endif
+
 #ifndef NATALIA_NAND_PS_OFF_LEVEL
 #define NATALIA_NAND_PS_OFF_LEVEL 1
 #endif
@@ -435,7 +440,11 @@ BoardStatus board_disconnect_signal_lines(BoardSignalTarget target) {
 }
 
 BoardStatus board_nand_power_on(uint8_t bank_id) {
-#if (NATALIA_NAND_POWER_CONTROL == 0)
+#if !defined(NATALIA_ENABLE_NAND_DRIVER)
+    (void)bank_id;
+
+    return BOARD_OK;
+#elif (NATALIA_NAND_POWER_CONTROL == 0)
     if ((bank_id != 1U) && (bank_id != 2U)) {
         return BOARD_ERR_INVALID_ARG;
     }
@@ -463,7 +472,11 @@ BoardStatus board_nand_power_on(uint8_t bank_id) {
 }
 
 BoardStatus board_nand_power_off(uint8_t bank_id) {
-#if (NATALIA_NAND_POWER_CONTROL == 0)
+#if !defined(NATALIA_ENABLE_NAND_DRIVER)
+    (void)bank_id;
+
+    return BOARD_OK;
+#elif (NATALIA_NAND_POWER_CONTROL == 0)
     if ((bank_id != 1U) && (bank_id != 2U)) {
         return BOARD_ERR_INVALID_ARG;
     }
@@ -509,7 +522,17 @@ BoardStatus board_nand_power_off(uint8_t bank_id) {
 }
 
 BoardStatus board_nand_is_powered(uint8_t bank_id, uint8_t* is_powered) {
-#if (NATALIA_NAND_POWER_CONTROL == 0)
+#if !defined(NATALIA_ENABLE_NAND_DRIVER)
+    (void)bank_id;
+
+    if (is_powered == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *is_powered = 1U;
+
+    return BOARD_OK;
+#elif (NATALIA_NAND_POWER_CONTROL == 0)
     if (is_powered == 0) {
         return BOARD_ERR_INVALID_ARG;
     }
@@ -595,7 +618,7 @@ BoardStatus board_nand_connect(uint8_t bank_id) {
 #else
     (void)bank_id;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 #endif
 }
 
@@ -639,7 +662,7 @@ BoardStatus board_nand_read(uint8_t bank_id,
     (void)buffer;
     (void)size;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 #endif
 }
 
@@ -682,7 +705,7 @@ BoardStatus board_nand_write(uint8_t bank_id,
     (void)buffer;
     (void)size;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 #endif
 }
 
@@ -706,7 +729,7 @@ BoardStatus board_nand_open_write(uint8_t bank_id, uint32_t start_packet_count) 
     (void)bank_id;
     (void)start_packet_count;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 #endif
 }
 
@@ -728,7 +751,7 @@ BoardStatus board_nand_write_packet(uint8_t bank_id, const void* packet) {
     (void)bank_id;
     (void)packet;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 #endif
 }
 
@@ -744,9 +767,14 @@ BoardStatus board_nand_write_poll(uint8_t bank_id, uint8_t* is_idle) {
     return nand_storage_write_poll(is_idle);
 #else
     (void)bank_id;
-    (void)is_idle;
 
-    return BOARD_ERR_UNSUPPORTED;
+    if (is_idle == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *is_idle = 1U;
+
+    return BOARD_OK;
 #endif
 }
 
@@ -762,9 +790,14 @@ BoardStatus board_nand_write_flush(uint8_t bank_id, uint8_t* is_done) {
     return nand_storage_write_flush(is_done);
 #else
     (void)bank_id;
-    (void)is_done;
 
-    return BOARD_ERR_UNSUPPORTED;
+    if (is_done == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *is_done = 1U;
+
+    return BOARD_OK;
 #endif
 }
 
@@ -788,7 +821,7 @@ BoardStatus board_nand_open_read(uint8_t bank_id, uint32_t packet_count) {
     (void)bank_id;
     (void)packet_count;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 #endif
 }
 
@@ -813,7 +846,7 @@ BoardStatus board_nand_read_packet(uint8_t bank_id,
     (void)packet_index;
     (void)packet;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 #endif
 }
 
@@ -836,9 +869,14 @@ BoardStatus board_nand_read_next_packet(uint8_t bank_id,
 #else
     (void)bank_id;
     (void)packet;
-    (void)has_packet;
 
-    return BOARD_ERR_UNSUPPORTED;
+    if (has_packet == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *has_packet = 0U;
+
+    return BOARD_OK;
 #endif
 }
 
@@ -859,9 +897,14 @@ BoardStatus board_nand_get_capacity_packets(uint8_t bank_id,
     return nand_storage_get_capacity_packets(packet_capacity);
 #else
     (void)bank_id;
-    (void)packet_capacity;
 
-    return BOARD_ERR_UNSUPPORTED;
+    if (packet_capacity == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *packet_capacity = 65535U;
+
+    return BOARD_OK;
 #endif
 }
 
@@ -882,9 +925,14 @@ BoardStatus board_nand_get_committed_packet_count(uint8_t bank_id,
     return nand_storage_get_committed_packet_count(packet_count);
 #else
     (void)bank_id;
-    (void)packet_count;
 
-    return BOARD_ERR_UNSUPPORTED;
+    if (packet_count == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *packet_count = 0U;
+
+    return BOARD_OK;
 #endif
 }
 
@@ -907,7 +955,7 @@ BoardStatus board_nand_erase_start(uint8_t bank_id) {
 #else
     (void)bank_id;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 #endif
 }
 
@@ -927,9 +975,14 @@ BoardStatus board_nand_erase_is_done(uint8_t bank_id, uint8_t* is_done) {
     return nand_storage_erase_bank_poll(is_done);
 #else
     (void)bank_id;
-    (void)is_done;
 
-    return BOARD_ERR_UNSUPPORTED;
+    if (is_done == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *is_done = 1U;
+
+    return BOARD_OK;
 #endif
 }
 
@@ -949,9 +1002,14 @@ BoardStatus board_nand_is_full(uint8_t bank_id, uint8_t* is_full) {
     return nand_storage_is_full(is_full);
 #else
     (void)bank_id;
-    (void)is_full;
 
-    return BOARD_ERR_UNSUPPORTED;
+    if (is_full == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *is_full = 0U;
+
+    return BOARD_OK;
 #endif
 }
 
@@ -1042,6 +1100,16 @@ BoardStatus board_ped_reset_trigger(void) {
     return BOARD_OK;
 }
 
+BoardStatus board_ped_take_trigger_events(uint32_t* event_count) {
+    if (event_count == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *event_count = 0U;
+
+    return BOARD_OK;
+}
+
 #elif defined(NATALIA_ENABLE_PED_REG_DRIVER) && (NATALIA_ENABLE_PED_REG_DRIVER != 0)
 
 BoardStatus board_ped_power_on(void) {
@@ -1086,14 +1154,34 @@ BoardStatus board_ped_reset_trigger(void) {
     return ped_reg_reset_trigger();
 }
 
+BoardStatus board_ped_take_trigger_events(uint32_t* event_count) {
+    uint8_t pending = 0U;
+    BoardStatus status;
+
+    if (event_count == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *event_count = 0U;
+
+    status = ped_reg_take_trigger_pending(&pending);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    *event_count = (pending != 0U) ? 1U : 0U;
+
+    return BOARD_OK;
+}
+
 #else
 
 BoardStatus board_ped_power_on(void) {
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 }
 
 BoardStatus board_ped_power_off(void) {
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 }
 
 BoardStatus board_ped_is_powered(uint8_t* is_powered) {
@@ -1101,13 +1189,13 @@ BoardStatus board_ped_is_powered(uint8_t* is_powered) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    *is_powered = 0U;
+    *is_powered = 1U;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 }
 
 BoardStatus board_ped_reg_init(void) {
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 }
 
 BoardStatus board_ped_read_status(uint32_t* status) {
@@ -1117,14 +1205,14 @@ BoardStatus board_ped_read_status(uint32_t* status) {
 
     *status = 0U;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 }
 
 BoardStatus board_ped_write_config(const void* config, size_t size) {
     (void)config;
     (void)size;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 }
 
 BoardStatus board_ped_read_event(void* event_buffer,
@@ -1139,23 +1227,33 @@ BoardStatus board_ped_read_event(void* event_buffer,
 
     *bytes_read = 0U;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 }
 
 BoardStatus board_ped_set_inhibit(uint8_t enabled) {
     (void)enabled;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 }
 
 BoardStatus board_ped_set_sleep(uint8_t enabled) {
     (void)enabled;
 
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
 }
 
 BoardStatus board_ped_reset_trigger(void) {
-    return BOARD_ERR_UNSUPPORTED;
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_take_trigger_events(uint32_t* event_count) {
+    if (event_count == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *event_count = 0U;
+
+    return BOARD_OK;
 }
 
 #endif
@@ -1566,6 +1664,37 @@ BoardStatus board_read_power_status(uint32_t* power_status) {
 #include "tc1047.h"
 #endif
 
+#if defined(NATALIA_ENABLE_TMP112_DRIVER) && (NATALIA_ENABLE_TMP112_DRIVER != 0)
+#include "tmp112.h"
+#include "tmp112_config.h"
+
+static uint8_t board_tmp112_initialized;
+#endif
+
+static void board_digital_temp_clear_sample(BoardDigitalTempSample* sample) {
+    if (sample != 0) {
+        sample->temperature_milli_c = 0;
+        sample->raw_12bit = 0;
+        sample->ready = 0U;
+        sample->range_valid = 0U;
+    }
+}
+
+#if defined(NATALIA_ENABLE_TMP112_DRIVER) && (NATALIA_ENABLE_TMP112_DRIVER != 0)
+static uint8_t board_digital_temp_address(BoardTempSensorId sensor, uint8_t* address) {
+    switch (sensor) {
+    case BOARD_TEMP_SENSOR_PU:
+        *address = TMP112_CONFIG_PU_ADDRESS_7BIT;
+        return 1U;
+    case BOARD_TEMP_SENSOR_PED:
+        *address = TMP112_CONFIG_PED_ADDRESS_7BIT;
+        return 1U;
+    default:
+        return 0U;
+    }
+}
+#endif
+
 static void board_temp_clear_sample(BoardTempSample* sample) {
     if (sample != 0) {
         sample->temperature_milli_c = 0;
@@ -1657,3 +1786,210 @@ BoardStatus board_read_temp_milli_c(int32_t* temperature_milli_c) {
     return BOARD_ERR_UNSUPPORTED;
 #endif
 }
+
+BoardStatus board_temp_digital_init(void) {
+#if defined(NATALIA_ENABLE_TMP112_DRIVER) && (NATALIA_ENABLE_TMP112_DRIVER != 0)
+    BoardStatus status;
+
+    board_tmp112_initialized = 0U;
+
+    status = tmp112_init(TMP112_CONFIG_SPEED);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    board_tmp112_initialized = 1U;
+
+    return BOARD_OK;
+#else
+    return BOARD_ERR_UNSUPPORTED;
+#endif
+}
+
+BoardStatus board_read_digital_temp(BoardTempSensorId sensor, BoardDigitalTempSample* sample) {
+#if defined(NATALIA_ENABLE_TMP112_DRIVER) && (NATALIA_ENABLE_TMP112_DRIVER != 0)
+    Tmp112Sample tmp_sample;
+    uint8_t address;
+    BoardStatus status;
+
+    if (sample == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    board_digital_temp_clear_sample(sample);
+
+    if (board_digital_temp_address(sensor, &address) == 0U) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (board_tmp112_initialized == 0U) {
+        return BOARD_ERR_NOT_READY;
+    }
+
+    status = tmp112_read_sample(address, &tmp_sample);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    sample->temperature_milli_c = tmp_sample.temperature_milli_c;
+    sample->raw_12bit = tmp_sample.raw_12bit;
+    sample->range_valid = tmp_sample.range_valid;
+    sample->ready = 1U;
+
+    return BOARD_OK;
+#else
+    if (sample == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    board_digital_temp_clear_sample(sample);
+
+    (void)sensor;
+
+    return BOARD_ERR_UNSUPPORTED;
+#endif
+}
+
+BoardStatus board_read_digital_temp_milli_c(BoardTempSensorId sensor, int32_t* temperature_milli_c) {
+#if defined(NATALIA_ENABLE_TMP112_DRIVER) && (NATALIA_ENABLE_TMP112_DRIVER != 0)
+    uint8_t address;
+
+    if (temperature_milli_c == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (board_digital_temp_address(sensor, &address) == 0U) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (board_tmp112_initialized == 0U) {
+        return BOARD_ERR_NOT_READY;
+    }
+
+    return tmp112_read_temperature_milli_c(address, temperature_milli_c);
+#else
+    if (temperature_milli_c == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *temperature_milli_c = 0;
+
+    (void)sensor;
+
+    return BOARD_ERR_UNSUPPORTED;
+#endif
+}
+
+#if defined(NATALIA_ENABLE_UNICAN_DRIVER) && (NATALIA_ENABLE_UNICAN_DRIVER != 0)
+
+BoardStatus board_comm_init(void) {
+    BoardStatus status;
+
+    status = can1_init();
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    unican_init();
+
+    return BOARD_OK;
+}
+
+void board_comm_close(void) {
+    unican_close();
+}
+
+void board_comm_poll(uint32_t now_ms) {
+    unican_poll(now_ms);
+}
+
+BoardStatus board_comm_send(const BoardCommMessage* message) {
+    UnicanMessage unican_message;
+
+    if (message == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    unican_message.message_id = message->message_id;
+    unican_message.address_from = message->address_from;
+    unican_message.address_to = message->address_to;
+    unican_message.length = message->length;
+    unican_message.data = message->data;
+
+    return unican_send(&unican_message);
+}
+
+BoardStatus board_comm_receive(BoardCommMessage* message, uint8_t* buffer, uint16_t capacity) {
+    UnicanMessage unican_message;
+    BoardStatus status;
+
+    if (message == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = unican_receive(&unican_message, buffer, capacity);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    message->message_id = unican_message.message_id;
+    message->address_from = unican_message.address_from;
+    message->address_to = unican_message.address_to;
+    message->length = unican_message.length;
+    message->data = unican_message.data;
+
+    return BOARD_OK;
+}
+
+void board_comm_get_status(BoardCommStatus* status) {
+    UnicanStatus unican_status;
+
+    if (status == NULL) {
+        return;
+    }
+
+    unican_get_status(&unican_status);
+
+    status->is_online = unican_status.is_online;
+    status->tx_busy = unican_status.tx_busy;
+    status->tx_messages_ok = unican_status.tx_messages_ok;
+    status->tx_messages_failed = unican_status.tx_messages_failed;
+}
+
+#else /* UniCAN driver disabled */
+
+BoardStatus board_comm_init(void) {
+    return BOARD_ERR_UNSUPPORTED;
+}
+
+void board_comm_close(void) {
+}
+
+void board_comm_poll(uint32_t now_ms) {
+    (void)now_ms;
+}
+
+BoardStatus board_comm_send(const BoardCommMessage* message) {
+    (void)message;
+    return BOARD_ERR_UNSUPPORTED;
+}
+
+BoardStatus board_comm_receive(BoardCommMessage* message, uint8_t* buffer, uint16_t capacity) {
+    (void)message;
+    (void)buffer;
+    (void)capacity;
+    return BOARD_ERR_NOT_READY;
+}
+
+void board_comm_get_status(BoardCommStatus* status) {
+    if (status == NULL) {
+        return;
+    }
+
+    status->is_online = false;
+    status->tx_busy = false;
+    status->tx_messages_ok = 0U;
+    status->tx_messages_failed = 0U;
+}
+
+#endif /* NATALIA_ENABLE_UNICAN_DRIVER */

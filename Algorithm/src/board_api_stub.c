@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "board_comm_stub.h"
 #include "dump_mode_config.h"
 #include "test_mode_config.h"
 
@@ -764,6 +765,16 @@ BoardStatus board_ped_reset_trigger(void) {
     return BOARD_OK;
 }
 
+BoardStatus board_ped_take_trigger_events(uint32_t *event_count) {
+    if (event_count == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *event_count = 0U;
+
+    return BOARD_OK;
+}
+
 BoardStatus board_rtc_get_time(InstrumentTime *time) {
     if (time == NULL) {
         return BOARD_ERR_INVALID_ARG;
@@ -819,4 +830,278 @@ BoardStatus board_read_power_status(uint32_t *power_status) {
     *power_status = 0U;
 
     return BOARD_OK;
+}
+
+BoardStatus board_rtc_take_1hz_events(uint32_t *event_count) {
+    if (event_count == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *event_count = 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_temp_init(void) {
+    return BOARD_OK;
+}
+
+BoardStatus board_temp_start(void) {
+    return BOARD_OK;
+}
+
+BoardStatus board_temp_stop(void) {
+    return BOARD_OK;
+}
+
+BoardStatus board_read_temp(BoardTempSample *sample) {
+    if (sample == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    memset(sample, 0, sizeof(*sample));
+
+    sample->temperature_milli_c = 25000;
+    sample->ready = 1U;
+    sample->range_valid = 1U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_read_temp_milli_c(int32_t *temperature_milli_c) {
+    if (temperature_milli_c == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *temperature_milli_c = 25000;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_temp_digital_init(void) {
+    return BOARD_OK;
+}
+
+BoardStatus board_read_digital_temp(BoardTempSensorId sensor, BoardDigitalTempSample *sample) {
+    (void)sensor;
+
+    if (sample == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    memset(sample, 0, sizeof(*sample));
+
+    sample->temperature_milli_c = 25000;
+    sample->ready = 1U;
+    sample->range_valid = 1U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_read_digital_temp_milli_c(BoardTempSensorId sensor, int32_t *temperature_milli_c) {
+    (void)sensor;
+
+    if (temperature_milli_c == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *temperature_milli_c = 25000;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_power_monitor_init(void) {
+    return BOARD_OK;
+}
+
+BoardStatus board_read_power_monitor(BoardPowerMonitorId monitor, BoardPowerSample *sample) {
+    (void)monitor;
+
+    if (sample == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    memset(sample, 0, sizeof(*sample));
+
+    sample->bus_voltage_mv = 3300U;
+    sample->ready = 1U;
+    sample->conversion_ready = 1U;
+
+    return BOARD_OK;
+}
+
+#if defined(NATALIA_ENABLE_BOARD_TEST_HOOKS) && (NATALIA_ENABLE_BOARD_TEST_HOOKS != 0)
+BoardStatus board_usb_test_capture_start(uint32_t packet_count, uint32_t acquisition_period_ticks) {
+    (void)packet_count;
+    (void)acquisition_period_ticks;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_usb_test_capture_get_result(uint32_t *bytes_written,
+                                              uint32_t *expected_bytes,
+                                              uint32_t *error_count) {
+    if ((bytes_written == NULL) || (expected_bytes == NULL) || (error_count == NULL)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *bytes_written = 0U;
+    *expected_bytes = 0U;
+    *error_count = 0U;
+
+    return BOARD_OK;
+}
+#endif
+
+static uint8_t board_comm_stub_rx_data[BOARD_COMM_MAX_MESSAGE_DATA];
+static uint16_t board_comm_stub_rx_length;
+static uint16_t board_comm_stub_rx_message_id;
+static uint16_t board_comm_stub_rx_address_from;
+static uint16_t board_comm_stub_rx_address_to;
+static bool board_comm_stub_rx_pending;
+
+static uint8_t board_comm_stub_tx_data[BOARD_COMM_MAX_MESSAGE_DATA];
+static uint16_t board_comm_stub_tx_length;
+static uint16_t board_comm_stub_tx_message_id;
+static uint16_t board_comm_stub_tx_address_to;
+static uint32_t board_comm_stub_tx_total;
+
+void board_comm_stub_reset(void) {
+    board_comm_stub_rx_length = 0U;
+    board_comm_stub_rx_message_id = 0U;
+    board_comm_stub_rx_address_from = 0U;
+    board_comm_stub_rx_address_to = 0U;
+    board_comm_stub_rx_pending = false;
+
+    board_comm_stub_tx_length = 0U;
+    board_comm_stub_tx_message_id = 0U;
+    board_comm_stub_tx_address_to = 0U;
+    board_comm_stub_tx_total = 0U;
+}
+
+void board_comm_stub_inject_rx(uint16_t message_id,
+                               uint16_t address_from,
+                               uint16_t address_to,
+                               const uint8_t* data,
+                               uint16_t length) {
+    if (length > (uint16_t)BOARD_COMM_MAX_MESSAGE_DATA) {
+        length = (uint16_t)BOARD_COMM_MAX_MESSAGE_DATA;
+    }
+
+    if ((data != NULL) && (length > 0U)) {
+        (void)memcpy(board_comm_stub_rx_data, data, length);
+    }
+
+    board_comm_stub_rx_message_id = message_id;
+    board_comm_stub_rx_address_from = address_from;
+    board_comm_stub_rx_address_to = address_to;
+    board_comm_stub_rx_length = length;
+    board_comm_stub_rx_pending = true;
+}
+
+uint32_t board_comm_stub_tx_count(void) {
+    return board_comm_stub_tx_total;
+}
+
+bool board_comm_stub_last_tx(uint16_t* message_id,
+                             uint16_t* address_to,
+                             uint8_t* buffer,
+                             uint16_t capacity,
+                             uint16_t* length) {
+    if (board_comm_stub_tx_total == 0U) {
+        return false;
+    }
+
+    if (message_id != NULL) {
+        *message_id = board_comm_stub_tx_message_id;
+    }
+
+    if (address_to != NULL) {
+        *address_to = board_comm_stub_tx_address_to;
+    }
+
+    if (length != NULL) {
+        *length = board_comm_stub_tx_length;
+    }
+
+    if ((buffer != NULL) && (capacity >= board_comm_stub_tx_length)) {
+        (void)memcpy(buffer, board_comm_stub_tx_data, board_comm_stub_tx_length);
+    }
+
+    return true;
+}
+
+BoardStatus board_comm_init(void) {
+    board_comm_stub_reset();
+    return BOARD_OK;
+}
+
+void board_comm_close(void) {
+}
+
+void board_comm_poll(uint32_t now_ms) {
+    (void)now_ms;
+}
+
+BoardStatus board_comm_send(const BoardCommMessage* message) {
+    uint16_t length;
+
+    if (message == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    length = message->length;
+    if (length > (uint16_t)BOARD_COMM_MAX_MESSAGE_DATA) {
+        length = (uint16_t)BOARD_COMM_MAX_MESSAGE_DATA;
+    }
+
+    if ((message->data != NULL) && (length > 0U)) {
+        (void)memcpy(board_comm_stub_tx_data, message->data, length);
+    }
+
+    board_comm_stub_tx_message_id = message->message_id;
+    board_comm_stub_tx_address_to = message->address_to;
+    board_comm_stub_tx_length = length;
+    ++board_comm_stub_tx_total;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_comm_receive(BoardCommMessage* message, uint8_t* buffer, uint16_t capacity) {
+    if ((message == NULL) || (buffer == NULL)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (!board_comm_stub_rx_pending) {
+        return BOARD_ERR_NOT_READY;
+    }
+
+    if (capacity < board_comm_stub_rx_length) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (board_comm_stub_rx_length > 0U) {
+        (void)memcpy(buffer, board_comm_stub_rx_data, board_comm_stub_rx_length);
+    }
+
+    message->message_id = board_comm_stub_rx_message_id;
+    message->address_from = board_comm_stub_rx_address_from;
+    message->address_to = board_comm_stub_rx_address_to;
+    message->length = board_comm_stub_rx_length;
+    message->data = buffer;
+
+    board_comm_stub_rx_pending = false;
+
+    return BOARD_OK;
+}
+
+void board_comm_get_status(BoardCommStatus* status) {
+    if (status == NULL) {
+        return;
+    }
+
+    status->is_online = true;
+    status->tx_busy = false;
+    status->tx_messages_ok = board_comm_stub_tx_total;
+    status->tx_messages_failed = 0U;
 }

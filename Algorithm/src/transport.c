@@ -5,8 +5,7 @@
 #include <string.h>
 
 #include "event_queue.h"
-#include "unican.h"
-#include "unican_node_addr.h"
+#include "tlm_staging.h"
 
 #ifdef NATALIA_ENABLE_DETECTOR_PROTO_LOG
 #include "detector_log.h"
@@ -46,7 +45,7 @@
 #define TRANSPORT_TX_QUEUE_LENGTH                  (4U)
 #define TRANSPORT_TX_MAX_RETRIES                   (3U)
 
-static uint8_t transport_rx_buffer[UNICAN_MAX_MESSAGE_DATA];
+static uint8_t transport_rx_buffer[BOARD_COMM_MAX_MESSAGE_DATA];
 
 typedef struct {
     uint16_t message_id;
@@ -64,8 +63,8 @@ static bool transport_tx_active = false;
 static uint32_t transport_tx_ok_snapshot = 0U;
 static uint32_t transport_tx_failed_snapshot = 0U;
 
-static uint16_t transport_remote_address = UNICAN_BVS_ADDRESS;
-static uint16_t transport_local_address = UNICAN_NA_ADDRESS;
+static uint16_t transport_remote_address = BOARD_COMM_ADDR_BVS;
+static uint16_t transport_local_address = BOARD_COMM_ADDR_NA;
 
 static uint16_t transport_next_tx_index(uint16_t index) {
     ++index;
@@ -123,12 +122,12 @@ static void transport_drop_front_tx_message(void) {
 }
 
 static BoardStatus transport_service_tx(void) {
-    UnicanStatus protocol_status;
-    UnicanMessage message;
+    BoardCommStatus protocol_status;
+    BoardCommMessage message;
     TransportTxItem* item;
     BoardStatus status;
 
-    unican_get_status(&protocol_status);
+    board_comm_get_status(&protocol_status);
 
     if (transport_tx_active) {
         if (protocol_status.tx_busy) {
@@ -162,7 +161,7 @@ static BoardStatus transport_service_tx(void) {
         return BOARD_OK;
     }
 
-    unican_get_status(&protocol_status);
+    board_comm_get_status(&protocol_status);
 
     if (protocol_status.tx_busy) {
         return BOARD_OK;
@@ -179,7 +178,7 @@ static BoardStatus transport_service_tx(void) {
     transport_tx_ok_snapshot = protocol_status.tx_messages_ok;
     transport_tx_failed_snapshot = protocol_status.tx_messages_failed;
 
-    status = unican_send(&message);
+    status = board_comm_send(&message);
 
     if (status == BOARD_ERR_BUSY) {
         return BOARD_OK;
@@ -408,7 +407,7 @@ BoardStatus transport_send_test_result(void) {
     return BOARD_ERR_UNSUPPORTED;
 }
 
-static bool transport_payload_is_fill_range(const UnicanMessage* message,
+static bool transport_payload_is_fill_range(const BoardCommMessage* message,
                                             uint16_t first,
                                             uint16_t limit) {
     uint16_t index;
@@ -429,17 +428,17 @@ static bool transport_payload_is_fill_range(const UnicanMessage* message,
     return true;
 }
 
-static bool transport_payload_is_fill(const UnicanMessage* message) {
+static bool transport_payload_is_fill(const BoardCommMessage* message) {
     return transport_payload_is_fill_range(message, 0U, TRANSPORT_SHORT_PAYLOAD_SIZE);
 }
 
-static bool transport_is_short_message(const UnicanMessage* message) {
+static bool transport_is_short_message(const BoardCommMessage* message) {
     return (message != NULL) &&
         (message->data != NULL) &&
         (message->length == TRANSPORT_SHORT_PAYLOAD_SIZE);
 }
 
-static BoardStatus transport_build_fill_command_event(const UnicanMessage* message,
+static BoardStatus transport_build_fill_command_event(const BoardCommMessage* message,
                                                       SystemEvent* event,
                                                       EventType type) {
     if ((message == NULL) || (event == NULL)) {
@@ -458,7 +457,7 @@ static BoardStatus transport_build_fill_command_event(const UnicanMessage* messa
     return BOARD_OK;
 }
 
-static BoardStatus transport_build_set_time_event(const UnicanMessage* message,
+static BoardStatus transport_build_set_time_event(const BoardCommMessage* message,
                                                   SystemEvent* event) {
     uint16_t milliseconds;
 
@@ -483,7 +482,7 @@ static BoardStatus transport_build_set_time_event(const UnicanMessage* message,
     return BOARD_OK;
 }
 
-static BoardStatus transport_build_sputniks_set_time_event(const UnicanMessage* message,
+static BoardStatus transport_build_sputniks_set_time_event(const BoardCommMessage* message,
                                                            SystemEvent* event) {
     if (!transport_is_short_message(message) || (event == NULL)) {
         return BOARD_ERR_INVALID_ARG;
@@ -537,7 +536,7 @@ static bool transport_validate_observe_params(uint16_t params) {
     return true;
 }
 
-static BoardStatus transport_build_observe_start_event(const UnicanMessage* message,
+static BoardStatus transport_build_observe_start_event(const BoardCommMessage* message,
                                                        SystemEvent* event) {
     uint8_t config;
     uint8_t bank_id;
@@ -590,7 +589,7 @@ static BoardStatus transport_build_observe_start_event(const UnicanMessage* mess
     return BOARD_OK;
 }
 
-static BoardStatus transport_build_observe_ctrl_event(const UnicanMessage* message,
+static BoardStatus transport_build_observe_ctrl_event(const BoardCommMessage* message,
                                                       SystemEvent* event) {
     uint8_t config;
     uint16_t observe_params;
@@ -643,7 +642,7 @@ static BoardStatus transport_build_observe_ctrl_event(const UnicanMessage* messa
     return BOARD_OK;
 }
 
-static BoardStatus transport_build_duty_event(const UnicanMessage* message,
+static BoardStatus transport_build_duty_event(const BoardCommMessage* message,
                                               SystemEvent* event) {
     uint8_t config;
     uint8_t bank_id;
@@ -682,7 +681,7 @@ static BoardStatus transport_build_duty_event(const UnicanMessage* message,
     return BOARD_OK;
 }
 
-static BoardStatus transport_build_dump_event(const UnicanMessage* message,
+static BoardStatus transport_build_dump_event(const BoardCommMessage* message,
                                               SystemEvent* event) {
     uint8_t config;
     uint8_t bank_id;
@@ -745,7 +744,7 @@ static BoardStatus transport_build_dump_event(const UnicanMessage* message,
     return BOARD_OK;
 }
 
-static BoardStatus transport_build_set_cfg_event(const UnicanMessage* message,
+static BoardStatus transport_build_set_cfg_event(const BoardCommMessage* message,
                                                  SystemEvent* event) {
     if ((message == NULL) || (event == NULL) || (message->data == NULL)) {
         return BOARD_ERR_INVALID_ARG;
@@ -764,7 +763,7 @@ static BoardStatus transport_build_set_cfg_event(const UnicanMessage* message,
     return BOARD_OK;
 }
 
-static BoardStatus transport_build_erase_event(const UnicanMessage* message,
+static BoardStatus transport_build_erase_event(const BoardCommMessage* message,
                                                SystemEvent* event) {
     uint8_t config;
     uint8_t bank_id;
@@ -799,7 +798,7 @@ static BoardStatus transport_build_erase_event(const UnicanMessage* message,
     return BOARD_OK;
 }
 
-static BoardStatus transport_build_test_event(const UnicanMessage* message,
+static BoardStatus transport_build_test_event(const BoardCommMessage* message,
                                               SystemEvent* event) {
     uint8_t config;
     uint8_t bank_id;
@@ -835,7 +834,7 @@ static BoardStatus transport_build_test_event(const UnicanMessage* message,
     return BOARD_OK;
 }
 
-static BoardStatus transport_build_test_result_event(const UnicanMessage* message,
+static BoardStatus transport_build_test_result_event(const BoardCommMessage* message,
                                                      SystemEvent* event) {
     uint8_t config;
     uint8_t bank_id;
@@ -868,7 +867,7 @@ static BoardStatus transport_build_test_result_event(const UnicanMessage* messag
     return BOARD_OK;
 }
 
-static BoardStatus transport_build_command_event(const UnicanMessage* message,
+static BoardStatus transport_build_command_event(const BoardCommMessage* message,
                                                  SystemEvent* event) {
     if ((message == NULL) || (event == NULL)) {
         return BOARD_ERR_INVALID_ARG;
@@ -930,7 +929,7 @@ static BoardStatus transport_build_command_event(const UnicanMessage* message,
     }
 }
 
-static BoardStatus transport_handle_address_command(const UnicanMessage* message) {
+static BoardStatus transport_handle_address_command(const BoardCommMessage* message) {
     if (!transport_is_short_message(message)) {
         return BOARD_ERR_INVALID_ARG;
     }
@@ -957,7 +956,7 @@ static BoardStatus transport_handle_address_command(const UnicanMessage* message
 }
 
 static void transport_handle_known_command(SystemContext* ctx,
-                                           const UnicanMessage* message) {
+                                           const BoardCommMessage* message) {
     BoardStatus status;
     SystemEvent event;
 
@@ -987,7 +986,7 @@ static void transport_handle_known_command(SystemContext* ctx,
 }
 
 static void transport_handle_known_telemetry(SystemContext* ctx,
-                                             const UnicanMessage* message) {
+                                             const BoardCommMessage* message) {
     SystemEvent event;
 
     if ((ctx == NULL) || (message == NULL)) {
@@ -1023,16 +1022,18 @@ static void transport_handle_known_telemetry(SystemContext* ctx,
         return;
     }
 
+    event.tlm_slot = tlm_staging_put(message->data, message->length);
+
     (void)system_event_queue_push_back(&event);
 }
 
-static bool transport_message_is_for_this_node(const UnicanMessage* message) {
+static bool transport_message_is_for_this_node(const BoardCommMessage* message) {
     return (message->address_to == transport_local_address) ||
-        (message->address_to == UNICAN_NA_ADDRESS);
+        (message->address_to == BOARD_COMM_ADDR_NA);
 }
 
 static void transport_handle_message(SystemContext* ctx,
-                                     const UnicanMessage* message) {
+                                     const BoardCommMessage* message) {
     if ((ctx == NULL) || (message == NULL)) {
         return;
     }
@@ -1057,18 +1058,18 @@ static void transport_handle_message(SystemContext* ctx,
 BoardStatus transport_poll(SystemContext* ctx, uint32_t now_ms) {
     BoardStatus status;
     BoardStatus tx_status;
-    UnicanMessage message;
+    BoardCommMessage message;
 
     if (ctx == NULL) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    unican_poll(now_ms);
+    board_comm_poll(now_ms);
 
     tx_status = transport_service_tx();
 
     while (true) {
-        status = unican_receive(&message,
+        status = board_comm_receive(&message,
                                 transport_rx_buffer,
                                 (uint16_t)sizeof(transport_rx_buffer));
 

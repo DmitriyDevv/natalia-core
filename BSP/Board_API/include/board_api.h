@@ -1,6 +1,7 @@
 #ifndef NATALIA_CORE_BOARD_API_H
 #define NATALIA_CORE_BOARD_API_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -39,6 +40,18 @@ typedef struct {
     uint8_t math_overflow;
     uint8_t ready;
 } BoardPowerSample;
+
+typedef enum {
+    BOARD_TEMP_SENSOR_PU = 0,
+    BOARD_TEMP_SENSOR_PED
+} BoardTempSensorId;
+
+typedef struct {
+    int32_t temperature_milli_c;
+    int16_t raw_12bit;
+    uint8_t ready;
+    uint8_t range_valid;
+} BoardDigitalTempSample;
 
 BoardStatus board_init_hardware(void);
 BoardStatus board_enter_safe_config(void);
@@ -84,6 +97,7 @@ BoardStatus board_ped_read_event(void* event_buffer, size_t buffer_size, size_t*
 BoardStatus board_ped_set_inhibit(uint8_t enabled);
 BoardStatus board_ped_set_sleep(uint8_t enabled);
 BoardStatus board_ped_reset_trigger(void);
+BoardStatus board_ped_take_trigger_events(uint32_t* event_count);
 
 BoardStatus board_rtc_get_time(InstrumentTime* time);
 BoardStatus board_rtc_set_time(const InstrumentTime* time);
@@ -94,6 +108,10 @@ BoardStatus board_temp_start(void);
 BoardStatus board_temp_stop(void);
 BoardStatus board_read_temp(BoardTempSample* sample);
 BoardStatus board_read_temp_milli_c(int32_t* temperature_milli_c);
+
+BoardStatus board_temp_digital_init(void);
+BoardStatus board_read_digital_temp(BoardTempSensorId sensor, BoardDigitalTempSample* sample);
+BoardStatus board_read_digital_temp_milli_c(BoardTempSensorId sensor, int32_t* temperature_milli_c);
 
 BoardStatus board_usb_write(const void* buffer, size_t size, size_t* bytes_written);
 BoardStatus board_usb_is_ready(uint8_t* is_ready);
@@ -106,5 +124,31 @@ BoardStatus board_usb_test_capture_get_result(uint32_t* bytes_written, uint32_t*
 BoardStatus board_read_power_status(uint32_t* power_status);
 BoardStatus board_power_monitor_init(void);
 BoardStatus board_read_power_monitor(BoardPowerMonitorId monitor, BoardPowerSample* sample);
+
+#define BOARD_COMM_MAX_MESSAGE_DATA (6144U)
+#define BOARD_COMM_ADDR_NA          (0x1EU)
+#define BOARD_COMM_ADDR_BVS         (0x05U)
+
+typedef struct {
+    uint16_t message_id;
+    uint16_t address_from;
+    uint16_t address_to;
+    uint16_t length;
+    const uint8_t* data;
+} BoardCommMessage;
+
+typedef struct {
+    bool is_online;
+    bool tx_busy;
+    uint32_t tx_messages_ok;
+    uint32_t tx_messages_failed;
+} BoardCommStatus;
+
+BoardStatus board_comm_init(void);
+void board_comm_close(void);
+void board_comm_poll(uint32_t now_ms);
+BoardStatus board_comm_send(const BoardCommMessage* message);
+BoardStatus board_comm_receive(BoardCommMessage* message, uint8_t* buffer, uint16_t capacity);
+void board_comm_get_status(BoardCommStatus* status);
 
 #endif

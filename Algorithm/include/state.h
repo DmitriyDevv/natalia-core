@@ -37,7 +37,6 @@ typedef enum {
 
     EVENT_TLM_TIME_SYNC,
     EVENT_TLM_ORBIT,
-    EVENT_TLM_ATTITUDE,
     EVENT_TLM_MAGFIELD,
 
     EVENT_BOOT,
@@ -194,6 +193,7 @@ typedef union {
 typedef struct {
     EventType type;
     uint32_t msg_id;
+    uint8_t tlm_slot;
     CommandPayload command;
 } SystemEvent;
 
@@ -263,6 +263,14 @@ typedef struct {
     SystemState finish_target_state;
 } DumpContext;
 
+#define TLM_PAYLOAD_MAX 128U
+
+typedef struct {
+    uint8_t data[TLM_PAYLOAD_MAX];
+    uint16_t length;
+    bool valid;
+} KtLatch;
+
 typedef struct {
     NandBank bank;
     PowerAfterDone power_after_done;
@@ -278,6 +286,21 @@ typedef struct {
     bool write_active;
     bool operation_failed;
     SystemState finish_target_state;
+    uint16_t observe_params;
+    uint16_t trigger_config;
+    uint8_t observe_mode_number;
+    uint32_t format_number;
+    uint32_t seconds_elapsed;
+    bool first_tick;
+    bool telem_pending;
+    uint8_t events_mode;
+    uint8_t events_nmax_sel;
+    uint8_t spectrum_mode;
+    uint8_t spectrum_nhist_sel;
+    uint8_t last_emitted_format;
+    KtLatch kt_sync_orbit_attitude;
+    KtLatch kt_geomagnetic;
+    KtLatch kt_mcilwain;
 } ObserveContext;
 
 typedef struct {
@@ -293,6 +316,7 @@ typedef struct {
     uint32_t alarm_status;
     uint32_t alarm_mask;
     uint32_t masked_alarm;
+    uint16_t observe_session_id;
     NandRuntimeState nand1;
     NandRuntimeState nand2;
     PedRuntimeState ped;

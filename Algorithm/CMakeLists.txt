@@ -5,6 +5,8 @@ target_sources(natalia_algorithm PRIVATE
         src/algorithm.c
         src/state.c
         src/observe.c
+        src/ni_packet.c
+        src/tlm_staging.c
         src/mram_store.c
         src/event_queue.c
 #        src/mode_erase.c
@@ -19,10 +21,13 @@ target_link_libraries(natalia_algorithm PUBLIC
         natalia_core_api
 )
 
+target_sources(natalia_algorithm PRIVATE
+        src/transport.c
+)
+
 if (NATALIA_USE_BOARD_STUBS)
     target_sources(natalia_algorithm PRIVATE
             src/board_api_stub.c
-            src/transport_stub.c
     )
 
     target_compile_definitions(natalia_algorithm PUBLIC
@@ -34,14 +39,6 @@ else ()
                 "Real transport requires -DNATALIA_ENABLE_UNICAN_DRIVER=ON"
         )
     endif ()
-
-    target_sources(natalia_algorithm PRIVATE
-            src/transport.c
-    )
-
-    target_link_libraries(natalia_algorithm PUBLIC
-            natalia_unican
-    )
 
     if (NATALIA_ENABLE_DETECTOR_PROTO_LOG)
         target_link_libraries(natalia_algorithm PRIVATE

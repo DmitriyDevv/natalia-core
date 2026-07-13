@@ -255,6 +255,26 @@ if (TARGET natalia_board_api_impl AND TARGET natalia_ina219)
     )
 endif()
 
+if (TARGET natalia_board_api_impl AND TARGET natalia_unican)
+    target_link_libraries(natalia_board_api_impl PUBLIC
+            natalia_unican
+    )
+
+    target_compile_definitions(natalia_board_api_impl PRIVATE
+            NATALIA_ENABLE_UNICAN_DRIVER=1
+    )
+endif()
+
+if (TARGET natalia_board_api_impl AND TARGET natalia_tmp112)
+    target_link_libraries(natalia_board_api_impl PUBLIC
+            natalia_tmp112
+    )
+
+    target_compile_definitions(natalia_board_api_impl PRIVATE
+            NATALIA_ENABLE_TMP112_DRIVER=1
+    )
+endif()
+
 if (NATALIA_ENABLE_DETECTOR_PROTO_LOG)
     add_subdirectory(Diagnostics)
 endif()

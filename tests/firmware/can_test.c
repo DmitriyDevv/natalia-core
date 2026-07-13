@@ -248,13 +248,11 @@ int main(void) {
     send_internal_event(&ctx, EVENT_BOOT);
     log_context_line(&ctx);
 
-    status = can1_init();
+    status = board_comm_init();
     if (status != BOARD_OK) {
-        log_status_code("can1_init error=", status);
+        log_status_code("board_comm_init error=", status);
         while (1) {}
     }
-
-    unican_init();
 
     debug_log_write("EVENT_INIT_DONE\r\n");
     send_internal_event(&ctx, EVENT_INIT_DONE);

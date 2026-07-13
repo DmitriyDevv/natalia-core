@@ -1,5 +1,7 @@
 #include "actions.h"
 #include "mram_store.h"
+#include "observe.h"
+#include "tlm_staging.h"
 
 #include <string.h>
 
@@ -444,25 +446,6 @@ ActionResult action_recalc_masked_alarm(SystemContext* ctx) {
     return ACTION_OK;
 }
 
-static void fill_observe_packet(SystemContext *ctx) {
-    uint32_t packet_index;
-    uint32_t index;
-    uint32_t value;
-
-    packet_index = ctx->observe.packet_index;
-
-    for (index = 0U; index < DUMP_MODE_PACKET_SIZE; ++index) {
-        value = 0x4E415441UL;
-        value ^= packet_index * 0x01010101UL;
-        value ^= index * 0x0001003DUL;
-        value ^= ctx->observe.acquisition_period_ticks;
-        value ^= value >> 16U;
-        value ^= value >> 8U;
-
-        ctx->observe.packet_buffer[index] = (uint8_t)(value & 0xFFU);
-    }
-}
-
 ActionResult action_start_observe(SystemContext* ctx, const SystemEvent* event) {
     NandRuntimeState* nand;
     NandBank bank;
@@ -490,6 +473,8 @@ ActionResult action_start_observe(SystemContext* ctx, const SystemEvent* event) 
     ctx->observe.bank = bank;
     ctx->observe.power_after_done = event->command.observe_start.power_after_done;
     ctx->observe.acquisition_period_ticks = event->command.observe_start.acquisition_period_ticks;
+    ctx->observe.observe_params = event->command.observe_start.observe_params;
+    ctx->observe.trigger_config = event->command.observe_start.trigger_config;
     ctx->observe.events_written = 0U;
     ctx->observe.packet_index = 0U;
     ctx->observe.committed_packet_count = 0U;
@@ -546,6 +531,7 @@ ActionResult action_start_observe(SystemContext* ctx, const SystemEvent* event) 
 
     ctx->ped.inhibit_enabled = false;
     ctx->observe.registration_enabled = true;
+    observe_start_session(ctx);
     ctx->observe.stage = OBSERVE_STAGE_ACTIVE;
 
     return ACTION_OK;
@@ -990,20 +976,16 @@ ActionResult action_update_test_results(SystemContext* ctx) {
 }
 
 ActionResult action_observe_periodic(SystemContext* ctx) {
-    InstrumentTime current_time = {0};
-
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
     }
 
-    return require_ok(board_rtc_get_time(&current_time));
+    observe_process_rtc_tick(ctx);
+
+    return ACTION_OK;
 }
 
 ActionResult action_handle_ped_trigger(SystemContext* ctx) {
-    uint8_t event_buffer[16];
-    size_t bytes_read = 0U;
-    ActionResult result;
-
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
     }
@@ -1012,21 +994,7 @@ ActionResult action_handle_ped_trigger(SystemContext* ctx) {
         return ACTION_OK;
     }
 
-    if (ctx->observe.pending_write || ctx->observe.write_active) {
-        return ACTION_ERR_OTHER;
-    }
-
-    result = require_ok(board_ped_read_event(event_buffer, sizeof(event_buffer), &bytes_read));
-    if (result != ACTION_OK) {
-        ctx->observe.operation_failed = true;
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        return result;
-    }
-
-    fill_observe_packet(ctx);
-    ctx->observe.pending_write = true;
-
-    return require_ok(board_ped_reset_trigger());
+    return ACTION_OK;
 }
 
 ActionResult action_update_observe_config(SystemContext* ctx, const SystemEvent* event) {
@@ -1049,38 +1017,52 @@ ActionResult action_update_observe_config(SystemContext* ctx, const SystemEvent*
     }
     ctx->ped.sleep_enabled = event->command.observe_ctrl.sleep_enabled;
 
+    ctx->observe.observe_params = event->command.observe_ctrl.observe_params;
+    ctx->observe.trigger_config = event->command.observe_ctrl.trigger_config;
+    observe_note_config_changed(ctx);
+
     return ACTION_OK;
 }
 
 ActionResult action_accept_time_sync(SystemContext* ctx, const SystemEvent* event) {
-    (void)event;
-    if (ctx == NULL) {
+    uint8_t buffer[TLM_PAYLOAD_MAX];
+    uint16_t length;
+
+    if ((ctx == NULL) || (event == NULL)) {
         return ACTION_ERR_CONTENT;
     }
+
+    length = tlm_staging_get(event->tlm_slot, buffer, (uint16_t)sizeof(buffer));
+    observe_apply_kt(ctx, NI_FORMAT_SYNC_ORBIT_ATTITUDE, buffer, length);
+
     return ACTION_OK;
 }
 
 ActionResult action_accept_orbit(SystemContext* ctx, const SystemEvent* event) {
-    (void)event;
-    if (ctx == NULL) {
-        return ACTION_ERR_CONTENT;
-    }
-    return ACTION_OK;
-}
+    uint8_t buffer[TLM_PAYLOAD_MAX];
+    uint16_t length;
 
-ActionResult action_accept_attitude(SystemContext* ctx, const SystemEvent* event) {
-    (void)event;
-    if (ctx == NULL) {
+    if ((ctx == NULL) || (event == NULL)) {
         return ACTION_ERR_CONTENT;
     }
+
+    length = tlm_staging_get(event->tlm_slot, buffer, (uint16_t)sizeof(buffer));
+    observe_apply_kt(ctx, NI_FORMAT_MCILWAIN, buffer, length);
+
     return ACTION_OK;
 }
 
 ActionResult action_accept_magfield(SystemContext* ctx, const SystemEvent* event) {
-    (void)event;
-    if (ctx == NULL) {
+    uint8_t buffer[TLM_PAYLOAD_MAX];
+    uint16_t length;
+
+    if ((ctx == NULL) || (event == NULL)) {
         return ACTION_ERR_CONTENT;
     }
+
+    length = tlm_staging_get(event->tlm_slot, buffer, (uint16_t)sizeof(buffer));
+    observe_apply_kt(ctx, NI_FORMAT_GEOMAGNETIC, buffer, length);
+
     return ACTION_OK;
 }
 
@@ -1140,6 +1122,8 @@ ActionResult action_finish_observe(SystemContext* ctx, const SystemEvent* event)
         ctx->observe.finish_requested = true;
         ctx->observe.finish_target_state = (event->type == EVENT_CMD_SHUTDOWN) ? STATE_SHUTDOWN : STATE_DUTY;
     }
+
+    observe_finish_session(ctx);
 
     result = require_ok(board_ped_set_inhibit(1U));
     if (result != ACTION_OK) {

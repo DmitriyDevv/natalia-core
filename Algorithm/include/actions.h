@@ -83,7 +83,6 @@ ActionResult action_accept_time_sync(SystemContext* ctx, const SystemEvent* even
 
 ActionResult action_accept_orbit(SystemContext* ctx, const SystemEvent* event);
 
-ActionResult action_accept_attitude(SystemContext* ctx, const SystemEvent* event);
 
 ActionResult action_accept_magfield(SystemContext* ctx, const SystemEvent* event);
 
