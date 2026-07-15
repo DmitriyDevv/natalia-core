@@ -237,6 +237,10 @@ if (TARGET natalia_board_api_impl AND TARGET natalia_ped_reg)
     target_link_libraries(natalia_board_api_impl PUBLIC
             natalia_ped_reg
     )
+
+    target_compile_definitions(natalia_board_api_impl PRIVATE
+            NATALIA_ENABLE_PED_REG_DRIVER=1
+    )
 endif()
 
 if (TARGET natalia_board_api_impl AND TARGET natalia_tc1047)

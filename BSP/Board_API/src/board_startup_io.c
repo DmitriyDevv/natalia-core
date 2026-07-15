@@ -22,41 +22,69 @@
 #define NAND_POWER_OFF_LEVEL GPIO_LEVEL_LOW
 #endif
 
-static const GpioConfig input_no_pull_config = {
-    .mode = GPIO_MODE_INPUT,
-    .pull = GPIO_PULL_NONE,
-    .output_type = GPIO_OUTPUT_PUSH_PULL,
-    .speed = GPIO_SPEED_LOW,
-    .initial_level = GPIO_LEVEL_LOW
-};
+#if defined(NATALIA_ENABLE_UNICAN_DRIVER) && (NATALIA_ENABLE_UNICAN_DRIVER != 0)
+#define BOARD_STARTUP_CAN_ENABLED 1
+#else
+#define BOARD_STARTUP_CAN_ENABLED 0
+#endif
 
-static const GpioConfig output_low_config = {
-    .mode = GPIO_MODE_OUTPUT,
-    .pull = GPIO_PULL_NONE,
-    .output_type = GPIO_OUTPUT_PUSH_PULL,
-    .speed = GPIO_SPEED_LOW,
-    .initial_level = GPIO_LEVEL_LOW
-};
+#if defined(NATALIA_ENABLE_NAND_DRIVER)
+#define BOARD_STARTUP_NAND_ENABLED 1
+#else
+#define BOARD_STARTUP_NAND_ENABLED 0
+#endif
 
-static const GpioConfig output_high_config = {
-    .mode = GPIO_MODE_OUTPUT,
-    .pull = GPIO_PULL_NONE,
-    .output_type = GPIO_OUTPUT_PUSH_PULL,
-    .speed = GPIO_SPEED_LOW,
-    .initial_level = GPIO_LEVEL_HIGH
-};
+#if defined(NATALIA_ENABLE_PED_REG_DRIVER) && (NATALIA_ENABLE_PED_REG_DRIVER != 0)
+#define BOARD_STARTUP_PED_ENABLED 1
+#else
+#define BOARD_STARTUP_PED_ENABLED 0
+#endif
 
+#if defined(NATALIA_ENABLE_USB_DEVICE_DRIVER) && (NATALIA_ENABLE_USB_DEVICE_DRIVER != 0)
+#define BOARD_STARTUP_USB_ENABLED 1
+#else
+#define BOARD_STARTUP_USB_ENABLED 0
+#endif
+
+#if (BOARD_STARTUP_CAN_ENABLED || BOARD_STARTUP_NAND_ENABLED || BOARD_STARTUP_PED_ENABLED)
 static BoardStatus configure_output(BoardPinId pin_id, GpioLevel level) {
+    static const GpioConfig output_low_config = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pull = GPIO_PULL_NONE,
+        .output_type = GPIO_OUTPUT_PUSH_PULL,
+        .speed = GPIO_SPEED_LOW,
+        .initial_level = GPIO_LEVEL_LOW
+    };
+
+    static const GpioConfig output_high_config = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pull = GPIO_PULL_NONE,
+        .output_type = GPIO_OUTPUT_PUSH_PULL,
+        .speed = GPIO_SPEED_LOW,
+        .initial_level = GPIO_LEVEL_HIGH
+    };
+
     if (level == GPIO_LEVEL_HIGH) {
         return gpio_configure(pin_id, &output_high_config);
     }
 
     return gpio_configure(pin_id, &output_low_config);
 }
+#endif
 
+#if (BOARD_STARTUP_CAN_ENABLED || BOARD_STARTUP_NAND_ENABLED || BOARD_STARTUP_USB_ENABLED)
 static BoardStatus configure_input(BoardPinId pin_id) {
+    static const GpioConfig input_no_pull_config = {
+        .mode = GPIO_MODE_INPUT,
+        .pull = GPIO_PULL_NONE,
+        .output_type = GPIO_OUTPUT_PUSH_PULL,
+        .speed = GPIO_SPEED_LOW,
+        .initial_level = GPIO_LEVEL_LOW
+    };
+
     return gpio_configure(pin_id, &input_no_pull_config);
 }
+#endif
 
 static BoardStatus disconnect_pins(const BoardPinId* pins, size_t count) {
     size_t index;
@@ -76,23 +104,48 @@ static BoardStatus disconnect_pins(const BoardPinId* pins, size_t count) {
     return BOARD_OK;
 }
 
-static BoardStatus configure_power_controls(void) {
-    BoardStatus status;
+static BoardStatus configure_ped_control(void) {
+#if BOARD_STARTUP_PED_ENABLED
+    return configure_output(BOARD_PIN_PU_PED_PS, GPIO_LEVEL_LOW);
+#else
+    return gpio_set_disconnected(BOARD_PIN_PU_PED_PS);
+#endif
+}
 
-    status = configure_output(BOARD_PIN_PU_PED_PS, GPIO_LEVEL_LOW);
-    if (status != BOARD_OK) {
-        return status;
-    }
+static BoardStatus configure_nand_control(void) {
+#if BOARD_STARTUP_NAND_ENABLED
+    BoardStatus status;
 
     status = configure_output(BOARD_PIN_PU_NAND1_PS, NAND_POWER_OFF_LEVEL);
     if (status != BOARD_OK) {
         return status;
     }
 
-    return configure_output(BOARD_PIN_PU_NAND2_PS, NAND_POWER_OFF_LEVEL);
+    status = configure_output(BOARD_PIN_PU_NAND2_PS, NAND_POWER_OFF_LEVEL);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = configure_input(BOARD_PIN_PU_NAND1_PSON);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    return configure_input(BOARD_PIN_PU_NAND2_PSON);
+#else
+    static const BoardPinId nand_pins[] = {
+        BOARD_PIN_PU_NAND1_PS,
+        BOARD_PIN_PU_NAND2_PS,
+        BOARD_PIN_PU_NAND1_PSON,
+        BOARD_PIN_PU_NAND2_PSON
+    };
+
+    return disconnect_pins(nand_pins, ARRAY_SIZE(nand_pins));
+#endif
 }
 
-static BoardStatus configure_can_control_lines(void) {
+static BoardStatus configure_can_control(void) {
+#if BOARD_STARTUP_CAN_ENABLED
     BoardStatus status;
 
     status = configure_output(BOARD_PIN_PU_CAN1_SHDN, GPIO_LEVEL_LOW);
@@ -121,22 +174,26 @@ static BoardStatus configure_can_control_lines(void) {
     }
 
     return configure_output(BOARD_PIN_PU_CAN2_S, GPIO_LEVEL_LOW);
+#else
+    static const BoardPinId can_pins[] = {
+        BOARD_PIN_PU_CAN1_SHDN,
+        BOARD_PIN_PU_CAN1_S,
+        BOARD_PIN_CAN1_TX,
+        BOARD_PIN_CAN1_RX,
+        BOARD_PIN_PU_CAN2_SHDN,
+        BOARD_PIN_PU_CAN2_S
+    };
+
+    return disconnect_pins(can_pins, ARRAY_SIZE(can_pins));
+#endif
 }
 
-static BoardStatus configure_monitor_inputs(void) {
-    BoardStatus status;
-
-    status = configure_input(BOARD_PIN_PU_NAND1_PSON);
-    if (status != BOARD_OK) {
-        return status;
-    }
-
-    status = configure_input(BOARD_PIN_PU_NAND2_PSON);
-    if (status != BOARD_OK) {
-        return status;
-    }
-
+static BoardStatus configure_usb_control(void) {
+#if BOARD_STARTUP_USB_ENABLED
     return configure_input(BOARD_PIN_PU_USB_VBUS);
+#else
+    return gpio_set_disconnected(BOARD_PIN_PU_USB_VBUS);
+#endif
 }
 
 static BoardStatus disconnect_inactive_interfaces(void) {
@@ -228,17 +285,22 @@ static BoardStatus configure_adc_input(void) {
 BoardStatus board_startup_io_init(void) {
     BoardStatus status;
 
-    status = configure_power_controls();
+    status = configure_ped_control();
     if (status != BOARD_OK) {
         return status;
     }
 
-    status = configure_can_control_lines();
+    status = configure_nand_control();
     if (status != BOARD_OK) {
         return status;
     }
 
-    status = configure_monitor_inputs();
+    status = configure_can_control();
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = configure_usb_control();
     if (status != BOARD_OK) {
         return status;
     }
