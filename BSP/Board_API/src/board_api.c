@@ -24,6 +24,15 @@
 #include "ina219_config.h"
 #endif
 
+#if defined(NATALIA_ENABLE_MRAM_DRIVER) && (NATALIA_ENABLE_MRAM_DRIVER != 0)
+#include "crc16.h"
+#include "mram.h"
+#endif
+
+#if defined(NATALIA_ENABLE_FTDI_DRIVER) && (NATALIA_ENABLE_FTDI_DRIVER != 0)
+#include "ftdi.h"
+#endif
+
 #if defined(NATALIA_ENABLE_UNICAN_DRIVER) && (NATALIA_ENABLE_UNICAN_DRIVER != 0)
 #include "can1.h"
 #include "unican.h"
@@ -47,11 +56,23 @@
 
 #define BOARD_NAND_POWER_TIMEOUT 1000000UL
 
+#if defined(NATALIA_ENABLE_MRAM_DRIVER) && (NATALIA_ENABLE_MRAM_DRIVER != 0)
+
+#define BOARD_MRAM_REGION_SIZE 1024U
+#define BOARD_MRAM_CRC_OFFSET (BOARD_MRAM_REGION_SIZE - 2U)
+#define BOARD_MRAM_DATA_SIZE BOARD_MRAM_CRC_OFFSET
+
+static uint8_t board_mram_region_buffer[BOARD_MRAM_DATA_SIZE];
+
+#else
+
 #define BOARD_MRAM_COPY_COUNT 2U
 #define BOARD_MRAM_COPY_SIZE 1024U
 
 static uint8_t board_mram_stub_storage[BOARD_MRAM_COPY_COUNT][BOARD_MRAM_COPY_SIZE];
 static uint8_t board_mram_stub_initialized;
+
+#endif
 
 #if defined(NATALIA_ENABLE_NAND_DRIVER)
 static uint8_t board_nand_storage_initialized;
@@ -88,6 +109,18 @@ BoardStatus board_init_hardware(void) {
         return status;
     }
 
+#if defined(NATALIA_ENABLE_MRAM_DRIVER) && (NATALIA_ENABLE_MRAM_DRIVER != 0)
+    status = mram_init(MRAM_BANK_1);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = mram_init(MRAM_BANK_2);
+    if (status != BOARD_OK) {
+        return status;
+    }
+#endif
+
 #if defined(NATALIA_ENABLE_PED_REG_DRIVER) && (NATALIA_ENABLE_PED_REG_DRIVER != 0)
     status = ped_reg_init();
     if (status != BOARD_OK) {
@@ -98,6 +131,13 @@ BoardStatus board_init_hardware(void) {
 #if defined(NATALIA_ENABLE_USB_DEVICE_DRIVER) && (NATALIA_ENABLE_USB_DEVICE_DRIVER != 0) && \
 (!defined(NATALIA_ENABLE_BOARD_TEST_HOOKS) || (NATALIA_ENABLE_BOARD_TEST_HOOKS == 0))
     status = usb_cdc_init();
+    if (status != BOARD_OK) {
+        return status;
+    }
+#endif
+
+#if defined(NATALIA_ENABLE_FTDI_DRIVER) && (NATALIA_ENABLE_FTDI_DRIVER != 0)
+    status = ftdi_init();
     if (status != BOARD_OK) {
         return status;
     }
@@ -130,6 +170,184 @@ BoardStatus board_enter_safe_config(void) {
 
     return status;
 }
+
+#if defined(NATALIA_ENABLE_MRAM_DRIVER) && (NATALIA_ENABLE_MRAM_DRIVER != 0)
+
+static BoardStatus board_mram_copy_to_bank(uint8_t copy_id, MramBank* bank) {
+    switch (copy_id) {
+    case 1U:
+        *bank = MRAM_BANK_1;
+        return BOARD_OK;
+    case 2U:
+        *bank = MRAM_BANK_2;
+        return BOARD_OK;
+    default:
+        return BOARD_ERR_INVALID_ARG;
+    }
+}
+
+static BoardStatus board_mram_check_range(uint32_t offset, size_t size) {
+    if (offset > BOARD_MRAM_DATA_SIZE) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (size > (size_t)(BOARD_MRAM_DATA_SIZE - offset)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    return BOARD_OK;
+}
+
+static BoardStatus board_mram_update_crc(MramBank bank) {
+    BoardStatus status;
+    uint16_t crc;
+    uint8_t crc_bytes[2];
+
+    status = mram_read(bank, 0U, board_mram_region_buffer, BOARD_MRAM_DATA_SIZE);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    crc = crc16_ccitt(board_mram_region_buffer, BOARD_MRAM_DATA_SIZE);
+    crc_bytes[0] = (uint8_t)(crc & 0xFFU);
+    crc_bytes[1] = (uint8_t)((crc >> 8) & 0xFFU);
+
+    return mram_write(bank, BOARD_MRAM_CRC_OFFSET, crc_bytes, sizeof(crc_bytes));
+}
+
+BoardStatus board_mram_read(uint8_t copy_id,
+                            uint32_t offset,
+                            void* buffer,
+                            size_t size) {
+    MramBank bank;
+    BoardStatus status;
+
+    if ((buffer == 0) && (size > 0U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = board_mram_copy_to_bank(copy_id, &bank);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = board_mram_check_range(offset, size);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    if (size == 0U) {
+        return BOARD_OK;
+    }
+
+    return mram_read(bank, offset, buffer, size);
+}
+
+BoardStatus board_mram_write(uint8_t copy_id,
+                             uint32_t offset,
+                             const void* buffer,
+                             size_t size) {
+    MramBank bank;
+    BoardStatus status;
+
+    if ((buffer == 0) && (size > 0U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = board_mram_copy_to_bank(copy_id, &bank);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = board_mram_check_range(offset, size);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    if (size > 0U) {
+        status = mram_write(bank, offset, buffer, size);
+        if (status != BOARD_OK) {
+            return status;
+        }
+    }
+
+    return board_mram_update_crc(bank);
+}
+
+BoardStatus board_mram_check_crc(uint8_t copy_id, uint8_t* is_valid) {
+    MramBank bank;
+    BoardStatus status;
+    uint16_t computed;
+    uint16_t stored;
+    uint8_t crc_bytes[2];
+
+    if (is_valid == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *is_valid = 0U;
+
+    status = board_mram_copy_to_bank(copy_id, &bank);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = mram_read(bank, 0U, board_mram_region_buffer, BOARD_MRAM_DATA_SIZE);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = mram_read(bank, BOARD_MRAM_CRC_OFFSET, crc_bytes, sizeof(crc_bytes));
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    computed = crc16_ccitt(board_mram_region_buffer, BOARD_MRAM_DATA_SIZE);
+    stored = (uint16_t)((uint16_t)crc_bytes[0] | (uint16_t)((uint16_t)crc_bytes[1] << 8));
+
+    if (computed == stored) {
+        *is_valid = 1U;
+    }
+
+    return BOARD_OK;
+}
+
+BoardStatus board_mram_restore_copy(uint8_t source_copy_id,
+                                    uint8_t target_copy_id) {
+    MramBank source_bank;
+    MramBank target_bank;
+    BoardStatus status;
+    uint8_t crc_bytes[2];
+
+    status = board_mram_copy_to_bank(source_copy_id, &source_bank);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = board_mram_copy_to_bank(target_copy_id, &target_bank);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = mram_read(source_bank, 0U, board_mram_region_buffer, BOARD_MRAM_DATA_SIZE);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = mram_read(source_bank, BOARD_MRAM_CRC_OFFSET, crc_bytes, sizeof(crc_bytes));
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = mram_write(target_bank, 0U, board_mram_region_buffer, BOARD_MRAM_DATA_SIZE);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    return mram_write(target_bank, BOARD_MRAM_CRC_OFFSET, crc_bytes, sizeof(crc_bytes));
+}
+
+#else
 
 static BoardStatus board_mram_stub_check_range(uint8_t copy_id,
                                                uint32_t offset,
@@ -259,6 +477,8 @@ BoardStatus board_mram_restore_copy(uint8_t source_copy_id,
     return BOARD_OK;
 }
 
+#endif
+
 static BoardStatus board_nand_get_pins(uint8_t bank_id,
                                        BoardPinId* power_pin,
                                        BoardPinId* power_status_pin) {
@@ -371,7 +591,7 @@ static BoardStatus board_nand_wait_power_state(uint8_t bank_id,
 static BoardStatus board_nand_disconnect_pins(uint8_t bank_id) {
     BoardStatus status;
 
-    status = gpio_set_disconnected(BOARD_PIN_QSPI_CLK);
+    status = gpio_set_disconnected(BOARD_PIN_QSPI_BK2_CLK);
     if (status != BOARD_OK) {
         return status;
     }
@@ -1433,6 +1653,49 @@ BoardStatus board_usb_is_ready(uint8_t* is_ready) {
     *is_ready = 0U;
 
     return BOARD_ERR_UNSUPPORTED;
+}
+
+#endif
+
+#if defined(NATALIA_ENABLE_FTDI_DRIVER) && (NATALIA_ENABLE_FTDI_DRIVER != 0)
+
+BoardStatus board_data_write(const void* buffer, size_t size, size_t* bytes_written) {
+    size_t accepted;
+    BoardStatus status;
+
+    if ((buffer == 0) && (size > 0U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (bytes_written == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    ftdi_set_mode(FTDI_MODE_DATA);
+
+    status = ftdi_write((const uint8_t*)buffer, size, &accepted);
+    if (status != BOARD_OK) {
+        *bytes_written = 0U;
+        return status;
+    }
+
+    *bytes_written = accepted;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_data_is_ready(uint8_t* is_ready) {
+    return ftdi_is_tx_idle(is_ready);
+}
+
+#else
+
+BoardStatus board_data_write(const void* buffer, size_t size, size_t* bytes_written) {
+    return board_usb_write(buffer, size, bytes_written);
+}
+
+BoardStatus board_data_is_ready(uint8_t* is_ready) {
+    return board_usb_is_ready(is_ready);
 }
 
 #endif

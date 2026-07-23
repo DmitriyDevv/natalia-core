@@ -88,6 +88,26 @@ static BoardStatus can1_configure_pins(void)
     return gpio_configure(BOARD_PIN_CAN1_TX, &tx_config);
 }
 
+static BoardStatus can1_configure_transceiver(void)
+{
+    const GpioConfig control_config = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pull = GPIO_PULL_NONE,
+        .output_type = GPIO_OUTPUT_PUSH_PULL,
+        .speed = GPIO_SPEED_LOW,
+        .initial_level = GPIO_LEVEL_LOW
+    };
+
+    BoardStatus status;
+
+    status = gpio_configure(BOARD_PIN_PU_CAN1_SHDN, &control_config);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    return gpio_configure(BOARD_PIN_PU_CAN1_S, &control_config);
+}
+
 static void can1_enable_clock_and_reset(void)
 {
     RCC->APB1ENR1 |= RCC_APB1ENR1_CAN1EN;
@@ -199,6 +219,11 @@ BoardStatus can1_configure_hardware(void)
     }
 
     status = can1_configure_pins();
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = can1_configure_transceiver();
     if (status != BOARD_OK) {
         return status;
     }

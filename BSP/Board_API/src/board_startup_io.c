@@ -5,6 +5,7 @@
 
 #include "board_pins.h"
 #include "gpio.h"
+#include "log_backend.h"
 
 #ifndef NATALIA_NAND_PS_OFF_LEVEL
 #error "NATALIA_NAND_PS_OFF_LEVEL must be defined as 0 or 1"
@@ -44,6 +45,12 @@
 #define BOARD_STARTUP_USB_ENABLED 1
 #else
 #define BOARD_STARTUP_USB_ENABLED 0
+#endif
+
+#if defined(NATALIA_ENABLE_FTDI_DRIVER) && (NATALIA_ENABLE_FTDI_DRIVER != 0)
+#define BOARD_STARTUP_FTDI_ENABLED 1
+#else
+#define BOARD_STARTUP_FTDI_ENABLED 0
 #endif
 
 #if (BOARD_STARTUP_CAN_ENABLED || BOARD_STARTUP_NAND_ENABLED || BOARD_STARTUP_PED_ENABLED)
@@ -145,7 +152,19 @@ static BoardStatus configure_nand_control(void) {
 }
 
 static BoardStatus configure_can_control(void) {
-#if BOARD_STARTUP_CAN_ENABLED
+#if (NATALIA_LOG_BACKEND == NATALIA_LOG_BACKEND_CAN)
+    /*
+     * CAN1 is owned by the CAN log backend, whose can1_init() runs before this
+     * startup sweep and configures the CAN1 TX/RX alternate function and the
+     * transceiver control lines. Do not disturb CAN1 here; leave CAN2 disconnected.
+     */
+    static const BoardPinId can2_pins[] = {
+        BOARD_PIN_PU_CAN2_SHDN,
+        BOARD_PIN_PU_CAN2_S
+    };
+
+    return disconnect_pins(can2_pins, ARRAY_SIZE(can2_pins));
+#elif BOARD_STARTUP_CAN_ENABLED
     BoardStatus status;
 
     status = configure_output(BOARD_PIN_PU_CAN1_SHDN, GPIO_LEVEL_LOW);
@@ -189,7 +208,9 @@ static BoardStatus configure_can_control(void) {
 }
 
 static BoardStatus configure_usb_control(void) {
-#if BOARD_STARTUP_USB_ENABLED
+#if BOARD_STARTUP_FTDI_ENABLED
+    return BOARD_OK;
+#elif BOARD_STARTUP_USB_ENABLED
     return configure_input(BOARD_PIN_PU_USB_VBUS);
 #else
     return gpio_set_disconnected(BOARD_PIN_PU_USB_VBUS);
@@ -203,12 +224,13 @@ static BoardStatus disconnect_inactive_interfaces(void) {
         BOARD_PIN_QSPI_BK1_IO1,
         BOARD_PIN_QSPI_BK1_IO2,
         BOARD_PIN_QSPI_BK1_IO3,
+        BOARD_PIN_QSPI_BK1_CLK,
         BOARD_PIN_QSPI_BK2_NCS,
         BOARD_PIN_QSPI_BK2_IO0,
         BOARD_PIN_QSPI_BK2_IO1,
         BOARD_PIN_QSPI_BK2_IO2,
         BOARD_PIN_QSPI_BK2_IO3,
-        BOARD_PIN_QSPI_CLK,
+        BOARD_PIN_QSPI_BK2_CLK,
 
         BOARD_PIN_SPI1_NSS,
         BOARD_PIN_SPI1_SCK,
@@ -227,14 +249,18 @@ static BoardStatus disconnect_inactive_interfaces(void) {
         BOARD_PIN_I2C3_SCL,
         BOARD_PIN_I2C3_SDA,
 
+#if !BOARD_STARTUP_FTDI_ENABLED
         BOARD_PIN_USB_DM,
         BOARD_PIN_USB_DP,
+#endif
 
         BOARD_PIN_CAN2_RX,
         BOARD_PIN_CAN2_TX,
 
+#if (NATALIA_LOG_BACKEND != NATALIA_LOG_BACKEND_USART2)
         BOARD_PIN_USART2_RX,
         BOARD_PIN_USART2_TX,
+#endif
 
         BOARD_PIN_RTC_OUT,
 

@@ -75,3 +75,17 @@ if (NATALIA_ENABLE_NAND_DRIVER)
             natalia_nand
     )
 endif()
+
+if (NATALIA_ENABLE_MRAM_DRIVER)
+    if (NOT NATALIA_ENABLE_SPI_DRIVER)
+        message(FATAL_ERROR
+                "NATALIA_ENABLE_MRAM_DRIVER requires NATALIA_ENABLE_SPI_DRIVER=ON"
+        )
+    endif()
+
+    add_subdirectory(MRAM)
+
+    target_link_libraries(natalia_drivers INTERFACE
+            natalia_mram
+    )
+endif()

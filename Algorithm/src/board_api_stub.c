@@ -822,6 +822,30 @@ BoardStatus board_usb_is_ready(uint8_t *is_ready) {
     return BOARD_OK;
 }
 
+BoardStatus board_data_write(const void *buffer, size_t size, size_t *bytes_written) {
+    if ((buffer == NULL) && (size > 0U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (bytes_written == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *bytes_written = size;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_data_is_ready(uint8_t *is_ready) {
+    if (is_ready == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *is_ready = 1U;
+
+    return BOARD_OK;
+}
+
 BoardStatus board_read_power_status(uint32_t *power_status) {
     if (power_status == NULL) {
         return BOARD_ERR_INVALID_ARG;

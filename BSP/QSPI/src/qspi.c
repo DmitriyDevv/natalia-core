@@ -402,9 +402,11 @@ static BoardStatus qspi_dma_start_transfer(const QspiCommand* command,
 
     DMA1_Channel5->CPAR = (uint32_t)(uintptr_t)&QUADSPI->DR;
     DMA1_Channel5->CMAR = (uint32_t)(uintptr_t)buffer;
-    DMA1_Channel5->CNDTR = byte_count;
+    DMA1_Channel5->CNDTR = byte_count / 4UL;
 
     ccr = DMA_CCR_MINC |
+        DMA_CCR_PSIZE_1 |
+        DMA_CCR_MSIZE_1 |
         DMA_CCR_PL_1;
 
     if (direction == QSPI_DMA_DIRECTION_WRITE) {
@@ -731,7 +733,7 @@ BoardStatus qspi_init(void) {
         (QSPI_CHIP_SELECT_HIGH_TIME << QUADSPI_DCR_CSHT_Pos);
 
     cr = (QSPI_PRESCALER_VALUE << QUADSPI_CR_PRESCALER_Pos) |
-        (0UL << QUADSPI_CR_FTHRES_Pos);
+        (3UL << QUADSPI_CR_FTHRES_Pos);
 
 #if (QSPI_SAMPLE_SHIFT != 0)
     cr |= QUADSPI_CR_SSHIFT;

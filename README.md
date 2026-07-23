@@ -143,8 +143,8 @@ DSTLOG|v=1|src=detector|ts=...|dir=tx|id=...|data=...
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `NATALIA_BUILD_TESTS`               | Сборка тестового варианта без запуска firmware на плате.                                                                                       |
 | `NATALIA_USE_BOARD_STUBS`           | Использовать заглушки`board_api` вместо реального железа.                                                                                     |
-| `NATALIA_ENABLE_DEBUG_LOG`          | Включить отладочный вывод через LPUART.                                                                                                                    |
-| `NATALIA_ENABLE_DETECTOR_PROTO_LOG` | Включить машинно-читаемый вывод`DSTLOG` для проверки UniCAN. Требует `NATALIA_ENABLE_DEBUG_LOG=ON` и `NATALIA_ENABLE_UNICAN_DRIVER=ON`. |
+| `NATALIA_LOG_BACKEND`               | Бэкенд журнала: `NONE`, `LPUART1`, `USART2` или `FTDI`.                                                                                                     |
+| `NATALIA_ENABLE_DETECTOR_PROTO_LOG` | Включить машинно-читаемый вывод`DSTLOG` для проверки UniCAN. Требует `NATALIA_LOG_BACKEND != NONE` и `NATALIA_ENABLE_UNICAN_DRIVER=ON`. |
 | `NATALIA_ENABLE_UNICAN_DRIVER`      | Собрать драйвер UniCAN.                                                                                                                                                  |
 | `NATALIA_ENABLE_PED_REG_DRIVER`     | Собрать драйвер PED_REG; пока выключен.                                                                                                                      |
 | `NATALIA_ENABLE_USB_DEVICE_DRIVER`  | Собрать USB Device; пока выключен.                                                                                                                                  |
@@ -162,7 +162,7 @@ cmake -S . -B cmake-build-debug \
   -DCMAKE_TOOLCHAIN_FILE=Toolchain_STM32L4.cmake \
   -DNATALIA_BUILD_TESTS=OFF \
   -DNATALIA_USE_BOARD_STUBS=OFF \
-  -DNATALIA_ENABLE_DEBUG_LOG=ON \
+  -DNATALIA_LOG_BACKEND=LPUART1 \
   -DNATALIA_ENABLE_DETECTOR_PROTO_LOG=ON \
   -DNATALIA_NAND_PS_OFF_LEVEL=HIGH \
   -DNATALIA_ENABLE_UNICAN_DRIVER=ON \
@@ -175,7 +175,7 @@ cmake --build cmake-build-debug --target natalia_firmware -j 18
 Для финальной сборки без отладочного UART-вывода:
 
 ```bash
--DNATALIA_ENABLE_DEBUG_LOG=OFF
+-DNATALIA_LOG_BACKEND=NONE
 -DNATALIA_ENABLE_DETECTOR_PROTO_LOG=OFF
 ```
 
@@ -192,7 +192,7 @@ cmake -S . -B cmake-build-tests \
   -G Ninja \
   -DNATALIA_BUILD_TESTS=ON \
   -DNATALIA_USE_BOARD_STUBS=ON \
-  -DNATALIA_ENABLE_DEBUG_LOG=OFF \
+  -DNATALIA_LOG_BACKEND=NONE \
   -DNATALIA_ENABLE_DETECTOR_PROTO_LOG=OFF \
   -DNATALIA_ENABLE_UNICAN_DRIVER=OFF \
   -DNATALIA_ENABLE_PED_REG_DRIVER=OFF \

@@ -8,6 +8,7 @@ if (NOT NATALIA_BUILD_TESTS)
     add_library(natalia_core STATIC
             src/clock.c
             src/timebase.c
+            src/crc16.c
     )
 
     target_include_directories(natalia_core PRIVATE

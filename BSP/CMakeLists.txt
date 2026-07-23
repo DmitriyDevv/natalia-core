@@ -48,6 +48,38 @@ if (NATALIA_ENABLE_I2C_DRIVER)
     )
 endif()
 
+if (NATALIA_ENABLE_SPI_DRIVER)
+    target_sources(natalia_bsp PRIVATE
+            SPI/src/spi.c
+    )
+
+    target_compile_definitions(natalia_bsp PUBLIC
+            NATALIA_ENABLE_SPI_DRIVER=1
+            NATALIA_SPI_MRAM_BR=${NATALIA_SPI_MRAM_BR}
+            SPI_DMA_AUTO_MIN_SIZE=${NATALIA_SPI_DMA_AUTO_MIN_SIZE}
+    )
+
+    if (NATALIA_SPI_DMA_READ)
+        target_compile_definitions(natalia_bsp PUBLIC
+                SPI_DMA_READ_ENABLED=1
+        )
+    else()
+        target_compile_definitions(natalia_bsp PUBLIC
+                SPI_DMA_READ_ENABLED=0
+        )
+    endif()
+
+    if (NATALIA_SPI_DMA_WRITE)
+        target_compile_definitions(natalia_bsp PUBLIC
+                SPI_DMA_WRITE_ENABLED=1
+        )
+    else()
+        target_compile_definitions(natalia_bsp PUBLIC
+                SPI_DMA_WRITE_ENABLED=0
+        )
+    endif()
+endif()
+
 if (NATALIA_ENABLE_ADC_DRIVER)
     target_sources(natalia_bsp PRIVATE
             ADC/src/adc.c
@@ -56,6 +88,12 @@ if (NATALIA_ENABLE_ADC_DRIVER)
     target_compile_definitions(natalia_bsp PUBLIC
             NATALIA_ENABLE_ADC_DRIVER=1
     )
+
+    if (NATALIA_ADC_USE_VREFBUF)
+        target_compile_definitions(natalia_bsp PRIVATE
+                NATALIA_ADC_USE_VREFBUF=1
+        )
+    endif()
 endif()
 
 if (NATALIA_QSPI_SAMPLE_SHIFT)
@@ -116,14 +154,59 @@ else()
     )
 endif()
 
-if (NATALIA_ENABLE_DEBUG_LOG)
+if (NATALIA_LOG_BACKEND STREQUAL "NONE")
+    target_compile_definitions(natalia_bsp PUBLIC
+            NATALIA_LOG_BACKEND=0
+    )
+elseif (NATALIA_LOG_BACKEND STREQUAL "LPUART1")
     target_sources(natalia_bsp PRIVATE
             UART/src/lpuart1_config.c
             UART/src/lpuart1.c
+            UART/src/log_backend_lpuart1.c
     )
 
     target_compile_definitions(natalia_bsp PUBLIC
-            NATALIA_ENABLE_DEBUG_LOG=1
+            NATALIA_LOG_BACKEND=1
+    )
+elseif (NATALIA_LOG_BACKEND STREQUAL "USART2")
+    target_sources(natalia_bsp PRIVATE
+            UART/src/usart2_config.c
+            UART/src/usart2.c
+            UART/src/log_backend_usart2.c
+    )
+
+    target_compile_definitions(natalia_bsp PUBLIC
+            NATALIA_LOG_BACKEND=2
+    )
+elseif (NATALIA_LOG_BACKEND STREQUAL "FTDI")
+    target_sources(natalia_bsp PRIVATE
+            UART/src/log_backend_ftdi.c
+    )
+
+    target_compile_definitions(natalia_bsp PUBLIC
+            NATALIA_LOG_BACKEND=3
+    )
+elseif (NATALIA_LOG_BACKEND STREQUAL "CAN")
+    target_sources(natalia_bsp PRIVATE
+            UART/src/log_backend_can.c
+    )
+
+    target_compile_definitions(natalia_bsp PUBLIC
+            NATALIA_LOG_BACKEND=4
+    )
+else()
+    message(FATAL_ERROR
+            "Unsupported NATALIA_LOG_BACKEND '${NATALIA_LOG_BACKEND}' for natalia_bsp"
+    )
+endif()
+
+if (NATALIA_ENABLE_FTDI_DRIVER)
+    target_sources(natalia_bsp PRIVATE
+            UART/src/ftdi.c
+    )
+
+    target_compile_definitions(natalia_bsp PUBLIC
+            NATALIA_ENABLE_FTDI_DRIVER=1
     )
 endif()
 
@@ -239,6 +322,12 @@ if (NOT NATALIA_USE_BOARD_STUBS)
 
         target_link_libraries(natalia_board_api_impl PUBLIC
                 natalia_usb_otg_fs
+        )
+    endif()
+
+    if (NATALIA_ENABLE_FTDI_DRIVER)
+        target_compile_definitions(natalia_board_api_impl PRIVATE
+                NATALIA_ENABLE_FTDI_DRIVER=1
         )
     endif()
 

@@ -108,6 +108,16 @@ static void adc_enable_dma_irq(void) {
     NVIC_ClearPendingIRQ(DMA1_Channel1_IRQn);
 }
 
+#if defined(NATALIA_ADC_USE_VREFBUF) && (NATALIA_ADC_USE_VREFBUF != 0)
+static BoardStatus adc_enable_vrefbuf(void) {
+    VREFBUF->CSR &= ~VREFBUF_CSR_VRS;
+    VREFBUF->CSR &= ~VREFBUF_CSR_HIZ;
+    VREFBUF->CSR |= VREFBUF_CSR_ENVR;
+
+    return adc_wait_flag_set(&VREFBUF->CSR, VREFBUF_CSR_VRR);
+}
+#endif
+
 static BoardStatus adc_enable_adc_clock_and_reference(void) {
     RCC->AHB2ENR |= RCC_AHB2ENR_ADCEN;
     (void)RCC->AHB2ENR;
@@ -120,6 +130,15 @@ static BoardStatus adc_enable_adc_clock_and_reference(void) {
     ADC1->CR |= ADC_CR_ADVREGEN;
 
     adc_delay_cycles(10000UL);
+
+#if defined(NATALIA_ADC_USE_VREFBUF) && (NATALIA_ADC_USE_VREFBUF != 0)
+    {
+        BoardStatus vrefbuf_status = adc_enable_vrefbuf();
+        if (vrefbuf_status != BOARD_OK) {
+            return vrefbuf_status;
+        }
+    }
+#endif
 
     adc_powered = 1U;
 

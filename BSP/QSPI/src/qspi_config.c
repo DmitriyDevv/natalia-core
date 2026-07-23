@@ -82,16 +82,21 @@ static BoardStatus configure_bank2_pins(void) {
 BoardStatus qspi_configure_pins(QspiBank bank) {
     BoardStatus status;
 
-    status = configure_data_pin(BOARD_PIN_QSPI_CLK);
-    if (status != BOARD_OK) {
-        return status;
-    }
-
     if (bank == QSPI_BANK_1) {
+        status = configure_data_pin(BOARD_PIN_QSPI_BK1_CLK);
+        if (status != BOARD_OK) {
+            return status;
+        }
+
         return configure_bank1_pins();
     }
 
     if (bank == QSPI_BANK_2) {
+        status = configure_data_pin(BOARD_PIN_QSPI_BK2_CLK);
+        if (status != BOARD_OK) {
+            return status;
+        }
+
         return configure_bank2_pins();
     }
 

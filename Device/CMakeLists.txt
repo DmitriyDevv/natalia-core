@@ -13,6 +13,18 @@ target_link_libraries(natalia_device PUBLIC
         natalia_cmsis
 )
 
+if (NATALIA_LOG_BACKEND STREQUAL "USART2")
+    target_compile_definitions(natalia_device PRIVATE
+            NATALIA_PIN_USART2_LOG=1
+    )
+endif()
+
+if (NATALIA_ENABLE_FTDI_DRIVER)
+    target_compile_definitions(natalia_device PRIVATE
+            NATALIA_PIN_FTDI=1
+    )
+endif()
+
 target_compile_options(natalia_device PRIVATE
         -Wall
         -Wextra
