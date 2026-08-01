@@ -95,8 +95,17 @@ static void test_store_config(void) {
 
     debug_log_write("\r\n--- mram_store config ---\r\n");
 
-    config.alarm_mask = 0xA5A5A5A5UL;
-    config.config_version = 0x12345678UL;
+    (void)memset(&config, 0, sizeof(config));
+    config.mcu_pu_temp_min = -40;
+    config.mcu_pu_temp_max = 85;
+    config.pu_voltage_min = 3000U;
+    config.pu_voltage_max = 3600U;
+    config.belt_lmin = 100;
+    config.ac1_rate_max = 1234U;
+    config.init_rtc_time = 0x11223344UL;
+    config.can_control = 0x0003U;
+    config.alarm_mask = 0xA5A5U;
+    config.config_version = 0x1234U;
 
     expect_ok("save_config", mram_store_save_config(&config));
 
@@ -117,10 +126,18 @@ static void test_store_service_data(void) {
 
     debug_log_write("\r\n--- mram_store service data ---\r\n");
 
-    service.alarm_status = 0xDEADBEEFUL;
+    (void)memset(&service, 0, sizeof(service));
+    service.alarm_status = 0xBEEFU;
     service.nand1_full = 1U;
     service.nand2_full = 0U;
     service.last_test_status = 0x0000CAFEUL;
+    service.observe_session_id = 0x0042U;
+    service.nand1_packet_count = 123456UL;
+    service.nand2_packet_count = 654321UL;
+    service.nand1_erase_count = 12U;
+    service.nand2_erase_count = 34U;
+    service.nand1_test_count = 5U;
+    service.nand2_test_count = 6U;
 
     expect_ok("save_service", mram_store_save_service_data(&service));
 
@@ -129,29 +146,36 @@ static void test_store_service_data(void) {
     expect_true("service_match", memcmp(&service, &loaded, sizeof(service)) == 0);
 }
 
-static void test_store_test_result(void) {
-    MramStoreTestResult result;
-    MramStoreStatus status;
-    uint16_t i;
+static void fill_test_result(MramStoreTestResult *result, uint8_t bank, uint32_t seed) {
+    uint32_t i;
 
-    debug_log_write("\r\n--- mram_store test result ---\r\n");
-
-    (void)memset(&result, 0, sizeof(result));
-    result.bank = 1U;
-    result.status = 0x11223344UL;
-    result.total_errors = 7UL;
-    result.failed_address = 0x000ABCDEUL;
+    (void)memset(result, 0, sizeof(*result));
+    result->bank = bank;
     for (i = 0U; i < TEST_MODE_BLOCK_COUNT; ++i) {
-        result.nerr[i] = (uint16_t)(i * 3U);
+        result->nerr[i] = (seed + i) & TEST_MODE_NERR_MAX;
     }
+}
 
-    expect_ok("save_test_result", mram_store_save_test_result(&result));
+static void test_store_test_result(void) {
+    static MramStoreTestResult r1;
+    static MramStoreTestResult r2;
+    static MramStoreTestResult loaded;
 
-    status.copy1_valid = 0U;
-    status.copy2_valid = 0U;
-    expect_ok("check_after_test_result", mram_store_check(&status));
-    expect_true("test_result_copy1_valid", status.copy1_valid != 0U);
-    expect_true("test_result_copy2_valid", status.copy2_valid != 0U);
+    debug_log_write("\r\n--- mram_store test result (per bank) ---\r\n");
+
+    fill_test_result(&r1, 1U, 0x1100U);
+    fill_test_result(&r2, 2U, 0x2200U);
+
+    expect_ok("save_test_result_b1", mram_store_save_test_result(&r1));
+    expect_ok("save_test_result_b2", mram_store_save_test_result(&r2));
+
+    (void)memset(&loaded, 0, sizeof(loaded));
+    expect_ok("load_test_result_b1", mram_store_load_test_result(1U, &loaded));
+    expect_true("test_result_b1_match", memcmp(&r1, &loaded, sizeof(r1)) == 0);
+
+    (void)memset(&loaded, 0, sizeof(loaded));
+    expect_ok("load_test_result_b2", mram_store_load_test_result(2U, &loaded));
+    expect_true("test_result_b2_match", memcmp(&r2, &loaded, sizeof(r2)) == 0);
 }
 
 static void test_redundant_restore(void) {
@@ -164,8 +188,10 @@ static void test_redundant_restore(void) {
 
     debug_log_write("\r\n--- redundant restore ---\r\n");
 
-    config.alarm_mask = 0x0F0F0F0FUL;
-    config.config_version = 0x0BADC0DEUL;
+    (void)memset(&config, 0, sizeof(config));
+    config.alarm_mask = 0x0F0FU;
+    config.config_version = 0xC0DEU;
+    config.ac1_rate_max = 4321U;
     expect_ok("save_config_for_restore", mram_store_save_config(&config));
 
     /* Corrupt copy 1 at the driver level (bank 1) without touching its stored

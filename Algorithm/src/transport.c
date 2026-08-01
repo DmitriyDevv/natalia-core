@@ -38,6 +38,7 @@
 
 #define TRANSPORT_TS_STATUS_MSG_ID                 (0x0200U)
 #define TRANSPORT_TS_ACK_MSG_ID                    (0x0201U)
+#define TRANSPORT_TS_TEST_RESULT_MSG_ID            (0x0203U)
 
 #define TRANSPORT_SHORT_PAYLOAD_SIZE               (6U)
 #define TRANSPORT_SET_CFG_PAYLOAD_SIZE             (66U)
@@ -45,16 +46,24 @@
 #define TRANSPORT_TX_QUEUE_LENGTH                  (4U)
 #define TRANSPORT_TX_MAX_RETRIES                   (3U)
 
+#define TRANSPORT_CAN_CONTROL_DEST_FROM_SENDER     (0x0001U)
+#define TRANSPORT_CAN_CONTROL_IGNORE_SPUTNIKS_TIME (0x0002U)
+
 static uint8_t transport_rx_buffer[BOARD_COMM_MAX_MESSAGE_DATA];
 
 typedef struct {
     uint16_t message_id;
+    uint16_t address_to;
     uint16_t length;
     uint8_t payload[TRANSPORT_SHORT_PAYLOAD_SIZE];
+    const uint8_t* long_data;
     uint8_t retries_done;
 } TransportTxItem;
 
 static TransportTxItem transport_tx_queue[TRANSPORT_TX_QUEUE_LENGTH];
+
+static uint8_t transport_long_tx_buffer[BOARD_MRAM_TEST_RESULT_IMAGE_SIZE];
+static bool transport_long_tx_busy = false;
 static uint16_t transport_tx_head = 0U;
 static uint16_t transport_tx_tail = 0U;
 static uint16_t transport_tx_count = 0U;
@@ -65,6 +74,24 @@ static uint32_t transport_tx_failed_snapshot = 0U;
 
 static uint16_t transport_remote_address = BOARD_COMM_ADDR_BVS;
 static uint16_t transport_local_address = BOARD_COMM_ADDR_NA;
+static uint16_t transport_can_control = 0U;
+static uint16_t transport_last_sender = BOARD_COMM_ADDR_BVS;
+
+void transport_reset(void) {
+    memset(transport_tx_queue, 0, sizeof(transport_tx_queue));
+    memset(transport_long_tx_buffer, 0, sizeof(transport_long_tx_buffer));
+    transport_long_tx_busy = false;
+    transport_tx_head = 0U;
+    transport_tx_tail = 0U;
+    transport_tx_count = 0U;
+    transport_tx_active = false;
+    transport_tx_ok_snapshot = 0U;
+    transport_tx_failed_snapshot = 0U;
+    transport_remote_address = BOARD_COMM_ADDR_BVS;
+    transport_local_address = BOARD_COMM_ADDR_NA;
+    transport_can_control = 0U;
+    transport_last_sender = BOARD_COMM_ADDR_BVS;
+}
 
 static uint16_t transport_next_tx_index(uint16_t index) {
     ++index;
@@ -74,6 +101,14 @@ static uint16_t transport_next_tx_index(uint16_t index) {
     }
 
     return index;
+}
+
+static uint16_t transport_effective_destination(void) {
+    if ((transport_can_control & TRANSPORT_CAN_CONTROL_DEST_FROM_SENDER) != 0U) {
+        return transport_last_sender;
+    }
+
+    return transport_remote_address;
 }
 
 static BoardStatus transport_enqueue_short_message(uint16_t message_id,
@@ -91,10 +126,47 @@ static BoardStatus transport_enqueue_short_message(uint16_t message_id,
     item = &transport_tx_queue[transport_tx_head];
 
     item->message_id = message_id;
+    item->address_to = transport_effective_destination();
     item->length = TRANSPORT_SHORT_PAYLOAD_SIZE;
+    item->long_data = NULL;
     item->retries_done = 0U;
 
     memcpy(item->payload, payload, TRANSPORT_SHORT_PAYLOAD_SIZE);
+
+    transport_tx_head = transport_next_tx_index(transport_tx_head);
+    ++transport_tx_count;
+
+    return BOARD_OK;
+}
+
+static BoardStatus transport_enqueue_long_message(uint16_t message_id,
+                                                  const uint8_t* data,
+                                                  uint16_t length) {
+    TransportTxItem* item;
+
+    if ((data == NULL) || (length == 0U) ||
+        (length > sizeof(transport_long_tx_buffer))) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (transport_long_tx_busy) {
+        return BOARD_ERR_BUSY;
+    }
+
+    if (transport_tx_count >= TRANSPORT_TX_QUEUE_LENGTH) {
+        return BOARD_ERR_BUSY;
+    }
+
+    memcpy(transport_long_tx_buffer, data, length);
+    transport_long_tx_busy = true;
+
+    item = &transport_tx_queue[transport_tx_head];
+
+    item->message_id = message_id;
+    item->address_to = transport_effective_destination();
+    item->length = length;
+    item->long_data = transport_long_tx_buffer;
+    item->retries_done = 0U;
 
     transport_tx_head = transport_next_tx_index(transport_tx_head);
     ++transport_tx_count;
@@ -111,8 +183,14 @@ static void transport_drop_front_tx_message(void) {
 
     item = &transport_tx_queue[transport_tx_tail];
 
+    if (item->long_data != NULL) {
+        transport_long_tx_busy = false;
+    }
+
     item->message_id = 0U;
+    item->address_to = 0U;
     item->length = 0U;
+    item->long_data = NULL;
     item->retries_done = 0U;
 
     memset(item->payload, 0, sizeof(item->payload));
@@ -171,9 +249,9 @@ static BoardStatus transport_service_tx(void) {
 
     message.message_id = item->message_id;
     message.address_from = transport_local_address;
-    message.address_to = transport_remote_address;
+    message.address_to = item->address_to;
     message.length = item->length;
-    message.data = item->payload;
+    message.data = (item->long_data != NULL) ? item->long_data : item->payload;
 
     transport_tx_ok_snapshot = protocol_status.tx_messages_ok;
     transport_tx_failed_snapshot = protocol_status.tx_messages_failed;
@@ -282,6 +360,22 @@ BoardStatus transport_send_ack(uint16_t command_id,
     payload[3] = TRANSPORT_FILL_BYTE;
     payload[4] = TRANSPORT_FILL_BYTE;
     payload[5] = TRANSPORT_FILL_BYTE;
+
+    return transport_enqueue_short_message(TRANSPORT_TS_ACK_MSG_ID,
+                                           payload);
+}
+
+BoardStatus transport_send_dump_ack(uint16_t command_id,
+                                    TransportAckStatus status,
+                                    uint32_t packet_count) {
+    uint8_t payload[TRANSPORT_SHORT_PAYLOAD_SIZE];
+
+    payload[0] = (uint8_t)(command_id & 0xFFU);
+    payload[1] = (uint8_t)(command_id >> 8U);
+    payload[2] = (uint8_t)status;
+    payload[3] = (uint8_t)(packet_count & 0xFFU);
+    payload[4] = (uint8_t)((packet_count >> 8U) & 0xFFU);
+    payload[5] = (uint8_t)((packet_count >> 16U) & 0xFFU);
 
     return transport_enqueue_short_message(TRANSPORT_TS_ACK_MSG_ID,
                                            payload);
@@ -403,8 +497,9 @@ BoardStatus transport_send_telemetry(void) {
     return BOARD_ERR_UNSUPPORTED;
 }
 
-BoardStatus transport_send_test_result(void) {
-    return BOARD_ERR_UNSUPPORTED;
+BoardStatus transport_send_test_result(const uint8_t* data, uint16_t length) {
+    return transport_enqueue_long_message(TRANSPORT_TS_TEST_RESULT_MSG_ID,
+                                          data, length);
 }
 
 static bool transport_payload_is_fill_range(const BoardCommMessage* message,
@@ -746,6 +841,11 @@ static BoardStatus transport_build_dump_event(const BoardCommMessage* message,
 
 static BoardStatus transport_build_set_cfg_event(const BoardCommMessage* message,
                                                  SystemEvent* event) {
+    const uint8_t* data;
+    CmdSetConfig* cfg;
+    uint16_t write_control;
+    uint16_t can_control;
+
     if ((message == NULL) || (event == NULL) || (message->data == NULL)) {
         return BOARD_ERR_INVALID_ARG;
     }
@@ -754,11 +854,56 @@ static BoardStatus transport_build_set_cfg_event(const BoardCommMessage* message
         return BOARD_ERR_INVALID_ARG;
     }
 
+    data = message->data;
+
+    write_control = transport_read_le_u16(&data[0]);
+    can_control = transport_read_le_u16(&data[64]);
+
+    if ((write_control & 0xFF80U) != 0U) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if ((can_control & 0xFFFCU) != 0U) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
     memset(event, 0, sizeof(*event));
 
     event->type = EVENT_CMD_SET_CFG;
     event->msg_id = message->message_id;
-    event->command.set_config.config_id = transport_read_le_u16(&message->data[0]);
+
+    cfg = &event->command.set_config;
+    cfg->write_control = write_control;
+    cfg->mcu_pu_temp_min = (int16_t)transport_read_le_u16(&data[2]);
+    cfg->mcu_pu_temp_max = (int16_t)transport_read_le_u16(&data[4]);
+    cfg->pu_temp_min = (int16_t)transport_read_le_u16(&data[6]);
+    cfg->pu_temp_max = (int16_t)transport_read_le_u16(&data[8]);
+    cfg->ped_temp_min = (int16_t)transport_read_le_u16(&data[10]);
+    cfg->ped_temp_max = (int16_t)transport_read_le_u16(&data[12]);
+    cfg->det_temp_min = (int16_t)transport_read_le_u16(&data[14]);
+    cfg->det_temp_max = (int16_t)transport_read_le_u16(&data[16]);
+    cfg->pu_voltage_min = transport_read_le_u16(&data[18]);
+    cfg->pu_voltage_max = transport_read_le_u16(&data[20]);
+    cfg->pu_current_min = transport_read_le_u16(&data[22]);
+    cfg->pu_current_max = transport_read_le_u16(&data[24]);
+    cfg->ped_voltage_min = transport_read_le_u16(&data[26]);
+    cfg->ped_voltage_max = transport_read_le_u16(&data[28]);
+    cfg->ped_current_min = transport_read_le_u16(&data[30]);
+    cfg->ped_current_max = transport_read_le_u16(&data[32]);
+    cfg->belt_lmin = (int16_t)transport_read_le_u16(&data[34]);
+    cfg->belt_lmax = (int16_t)transport_read_le_u16(&data[36]);
+    cfg->belt_bmin = (int16_t)transport_read_le_u16(&data[38]);
+    cfg->ac1_rate_max = transport_read_le_u16(&data[40]);
+    cfg->init_rtc_time = transport_read_le_u32(&data[42]);
+    cfg->observe_session_id = transport_read_le_u16(&data[46]);
+    cfg->nand1_packet_count = transport_read_le_u24(&data[48]);
+    cfg->nand2_packet_count = transport_read_le_u24(&data[51]);
+    cfg->nand1_erase_count = transport_read_le_u16(&data[54]);
+    cfg->nand2_erase_count = transport_read_le_u16(&data[56]);
+    cfg->nand1_test_count = transport_read_le_u16(&data[58]);
+    cfg->nand2_test_count = transport_read_le_u16(&data[60]);
+    cfg->alarm_mask = transport_read_le_u16(&data[62]);
+    cfg->can_control = can_control;
 
     return BOARD_OK;
 }
@@ -838,6 +983,7 @@ static BoardStatus transport_build_test_result_event(const BoardCommMessage* mes
                                                      SystemEvent* event) {
     uint8_t config;
     uint8_t bank_id;
+    uint8_t mram_copy;
 
     if (!transport_is_short_message(message) || (event == NULL)) {
         return BOARD_ERR_INVALID_ARG;
@@ -849,12 +995,17 @@ static BoardStatus transport_build_test_result_event(const BoardCommMessage* mes
 
     config = message->data[0];
     bank_id = config & 0x03U;
+    mram_copy = (config >> 2U) & 0x03U;
 
     if (!transport_is_valid_bank(bank_id)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    if ((config & 0xFCU) != 0U) {
+    if ((mram_copy != 1U) && (mram_copy != 2U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if ((config & 0xF0U) != 0U) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -863,6 +1014,7 @@ static BoardStatus transport_build_test_result_event(const BoardCommMessage* mes
     event->type = EVENT_CMD_TEST_RESULT;
     event->msg_id = message->message_id;
     event->command.test_result.bank = transport_decode_bank(bank_id);
+    event->command.test_result.mram_copy = mram_copy;
 
     return BOARD_OK;
 }
@@ -960,6 +1112,11 @@ static void transport_handle_known_command(SystemContext* ctx,
     BoardStatus status;
     SystemEvent event;
 
+    if ((message->message_id == TRANSPORT_KU_SPUTNIKS_SET_TIME_MSG_ID) &&
+        ((ctx->can_control & TRANSPORT_CAN_CONTROL_IGNORE_SPUTNIKS_TIME) != 0U)) {
+        return;
+    }
+
     if ((message->message_id == TRANSPORT_KU_SET_DESTINATION_ID_MSG_ID) ||
         (message->message_id == TRANSPORT_KU_SET_DEVICE_ID_MSG_ID)) {
         status = transport_handle_address_command(message);
@@ -981,7 +1138,6 @@ static void transport_handle_known_command(SystemContext* ctx,
         return;
     }
 
-    (void)ctx;
     (void)system_event_queue_push_back(&event);
 }
 
@@ -1042,6 +1198,8 @@ static void transport_handle_message(SystemContext* ctx,
         return;
     }
 
+    transport_last_sender = message->address_from;
+
     if (transport_is_known_command_id(message->message_id)) {
         transport_handle_known_command(ctx, message);
         return;
@@ -1063,6 +1221,8 @@ BoardStatus transport_poll(SystemContext* ctx, uint32_t now_ms) {
     if (ctx == NULL) {
         return BOARD_ERR_INVALID_ARG;
     }
+
+    transport_can_control = ctx->can_control;
 
     board_comm_poll(now_ms);
 

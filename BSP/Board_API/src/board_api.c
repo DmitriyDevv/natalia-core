@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "crc16.h"
+
 #include "board_startup_io.h"
 #include "gpio.h"
 #include "rtc.h"
@@ -25,7 +27,6 @@
 #endif
 
 #if defined(NATALIA_ENABLE_MRAM_DRIVER) && (NATALIA_ENABLE_MRAM_DRIVER != 0)
-#include "crc16.h"
 #include "mram.h"
 #endif
 
@@ -62,6 +63,9 @@
 #define BOARD_MRAM_CRC_OFFSET (BOARD_MRAM_REGION_SIZE - 2U)
 #define BOARD_MRAM_DATA_SIZE BOARD_MRAM_CRC_OFFSET
 
+#define BOARD_MRAM_TEST_RESULT1_OFFSET 0x2000U
+#define BOARD_MRAM_TEST_RESULT2_OFFSET 0x4000U
+
 static uint8_t board_mram_region_buffer[BOARD_MRAM_DATA_SIZE];
 
 #else
@@ -70,6 +74,7 @@ static uint8_t board_mram_region_buffer[BOARD_MRAM_DATA_SIZE];
 #define BOARD_MRAM_COPY_SIZE 1024U
 
 static uint8_t board_mram_stub_storage[BOARD_MRAM_COPY_COUNT][BOARD_MRAM_COPY_SIZE];
+static uint8_t board_mram_stub_test_result[BOARD_MRAM_COPY_COUNT][2][BOARD_MRAM_TEST_RESULT_SIZE];
 static uint8_t board_mram_stub_initialized;
 
 #endif
@@ -347,6 +352,105 @@ BoardStatus board_mram_restore_copy(uint8_t source_copy_id,
     return mram_write(target_bank, BOARD_MRAM_CRC_OFFSET, crc_bytes, sizeof(crc_bytes));
 }
 
+static BoardStatus board_mram_test_result_offset(uint8_t nand_bank, uint32_t* offset) {
+    if (nand_bank == 1U) {
+        *offset = BOARD_MRAM_TEST_RESULT1_OFFSET;
+        return BOARD_OK;
+    }
+    if (nand_bank == 2U) {
+        *offset = BOARD_MRAM_TEST_RESULT2_OFFSET;
+        return BOARD_OK;
+    }
+    return BOARD_ERR_INVALID_ARG;
+}
+
+BoardStatus board_mram_write_test_result(uint8_t copy_id,
+                                         uint8_t nand_bank,
+                                         const void* data,
+                                         size_t size) {
+    MramBank bank;
+    uint32_t offset;
+    uint16_t crc;
+    uint8_t crc_bytes[BOARD_MRAM_TEST_RESULT_CRC_SIZE];
+    BoardStatus status;
+
+    if ((data == 0) || (size != BOARD_MRAM_TEST_RESULT_SIZE)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = board_mram_copy_to_bank(copy_id, &bank);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = board_mram_test_result_offset(nand_bank, &offset);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = mram_write(bank, offset, data, size);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    crc = crc16_ccitt(data, size);
+    crc_bytes[0] = (uint8_t)(crc & 0xFFU);
+    crc_bytes[1] = (uint8_t)((crc >> 8) & 0xFFU);
+
+    return mram_write(bank, offset + size, crc_bytes, sizeof(crc_bytes));
+}
+
+BoardStatus board_mram_read_test_result(uint8_t copy_id,
+                                        uint8_t nand_bank,
+                                        void* data,
+                                        size_t size,
+                                        uint8_t* is_valid,
+                                        uint8_t* crc_out) {
+    MramBank bank;
+    uint32_t offset;
+    uint16_t crc;
+    uint16_t stored_crc;
+    uint8_t crc_bytes[BOARD_MRAM_TEST_RESULT_CRC_SIZE];
+    BoardStatus status;
+
+    if ((data == 0) || (size != BOARD_MRAM_TEST_RESULT_SIZE) || (is_valid == 0)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *is_valid = 0U;
+
+    status = board_mram_copy_to_bank(copy_id, &bank);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = board_mram_test_result_offset(nand_bank, &offset);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = mram_read(bank, offset, data, size);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = mram_read(bank, offset + size, crc_bytes, sizeof(crc_bytes));
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    crc = crc16_ccitt(data, size);
+    stored_crc = (uint16_t)((uint16_t)crc_bytes[0] | ((uint16_t)crc_bytes[1] << 8));
+    *is_valid = (crc == stored_crc) ? 1U : 0U;
+
+    if (crc_out != 0) {
+        crc_out[0] = crc_bytes[0];
+        crc_out[1] = crc_bytes[1];
+    }
+
+    return BOARD_OK;
+}
+
 #else
 
 static BoardStatus board_mram_stub_check_range(uint8_t copy_id,
@@ -473,6 +577,64 @@ BoardStatus board_mram_restore_copy(uint8_t source_copy_id,
     }
 
     (void)memcpy(target, source, BOARD_MRAM_COPY_SIZE);
+
+    return BOARD_OK;
+}
+
+BoardStatus board_mram_write_test_result(uint8_t copy_id,
+                                         uint8_t nand_bank,
+                                         const void* data,
+                                         size_t size) {
+    if ((data == 0) || (size != BOARD_MRAM_TEST_RESULT_SIZE)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if ((copy_id == 0U) || (copy_id > BOARD_MRAM_COPY_COUNT)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if ((nand_bank != 1U) && (nand_bank != 2U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    board_mram_stub_init_once();
+
+    (void)memcpy(board_mram_stub_test_result[copy_id - 1U][nand_bank - 1U],
+                 data, size);
+
+    return BOARD_OK;
+}
+
+BoardStatus board_mram_read_test_result(uint8_t copy_id,
+                                        uint8_t nand_bank,
+                                        void* data,
+                                        size_t size,
+                                        uint8_t* is_valid,
+                                        uint8_t* crc_out) {
+    if ((data == 0) || (size != BOARD_MRAM_TEST_RESULT_SIZE) || (is_valid == 0)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if ((copy_id == 0U) || (copy_id > BOARD_MRAM_COPY_COUNT)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if ((nand_bank != 1U) && (nand_bank != 2U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    board_mram_stub_init_once();
+
+    (void)memcpy(data,
+                 board_mram_stub_test_result[copy_id - 1U][nand_bank - 1U],
+                 size);
+    *is_valid = 1U;
+
+    if (crc_out != 0) {
+        uint16_t crc = crc16_ccitt(data, size);
+        crc_out[0] = (uint8_t)(crc & 0xFFU);
+        crc_out[1] = (uint8_t)((crc >> 8) & 0xFFU);
+    }
 
     return BOARD_OK;
 }
@@ -2144,6 +2306,10 @@ BoardStatus board_read_digital_temp_milli_c(BoardTempSensorId sensor, int32_t* t
 }
 
 #if defined(NATALIA_ENABLE_UNICAN_DRIVER) && (NATALIA_ENABLE_UNICAN_DRIVER != 0)
+
+_Static_assert(BOARD_COMM_MAX_MESSAGE_DATA <= UNICAN_MAX_MESSAGE_DATA,
+               "board_comm forwards length straight to unican_send; "
+               "BOARD_COMM_MAX_MESSAGE_DATA must not exceed UNICAN_MAX_MESSAGE_DATA");
 
 BoardStatus board_comm_init(void) {
     BoardStatus status;

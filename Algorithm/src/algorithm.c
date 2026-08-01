@@ -59,7 +59,11 @@ static uint8_t test_bank_id(NandBank bank) {
 }
 
 static uint32_t test_packet_address(uint32_t packet_index) {
-    return packet_index * TEST_MODE_BLOCK_SIZE;
+    return packet_index * TEST_MODE_PACKET_SIZE;
+}
+
+static uint32_t test_global_packet(const TestContext* test) {
+    return (test->block_index * TEST_MODE_PACKETS_PER_BLOCK) + test->packet_in_block;
 }
 
 static uint8_t make_test_pattern_byte(const TestContext* test, uint32_t address, size_t offset) {
@@ -75,10 +79,10 @@ static uint8_t make_test_pattern_byte(const TestContext* test, uint32_t address,
 }
 
 static void fill_test_pattern(TestContext* test) {
-    uint32_t address = test_packet_address(test->block_index);
+    uint32_t address = test_packet_address(test_global_packet(test));
     size_t index;
 
-    for (index = 0U; index < TEST_MODE_BLOCK_SIZE; ++index) {
+    for (index = 0U; index < TEST_MODE_PACKET_SIZE; ++index) {
         test->write_buffer[index] = make_test_pattern_byte(test, address, index);
     }
 }
@@ -118,6 +122,12 @@ static void test_mode_erase_step(SystemContext* ctx) {
         return;
     }
 
+    if (test->total_blocks == 0U) {
+        test->stage = TEST_STAGE_SAVE;
+        finish_test_step(ctx);
+        return;
+    }
+
     status = board_nand_open_write(test_bank_id(test->bank), 0U);
     if (status != BOARD_OK) {
         fail_test_step(ctx, TEST_RESULT_STATUS_NAND_WRITE_ERROR);
@@ -129,13 +139,14 @@ static void test_mode_erase_step(SystemContext* ctx) {
 
 static void test_mode_write_step(SystemContext* ctx) {
     TestContext* test = &ctx->test;
+    uint32_t packet = test_global_packet(test);
     BoardStatus status;
     uint8_t is_done = 0U;
 
     if (!test->write_started) {
         fill_test_pattern(test);
 
-        status = board_nand_open_write(test_bank_id(test->bank), test->block_index);
+        status = board_nand_open_write(test_bank_id(test->bank), packet);
         if (status != BOARD_OK) {
             fail_test_step(ctx, TEST_RESULT_STATUS_NAND_WRITE_ERROR);
             return;
@@ -147,7 +158,7 @@ static void test_mode_write_step(SystemContext* ctx) {
             return;
         }
 
-        test->current_address = test_packet_address(test->block_index);
+        test->current_address = test_packet_address(packet);
         test->write_started = true;
     }
 
@@ -167,9 +178,10 @@ static void test_mode_write_step(SystemContext* ctx) {
 
 static void test_mode_read_step(SystemContext* ctx) {
     TestContext* test = &ctx->test;
+    uint32_t packet = test_global_packet(test);
     BoardStatus status;
 
-    status = board_nand_open_read(test_bank_id(test->bank), test->block_index + 1U);
+    status = board_nand_open_read(test_bank_id(test->bank), packet + 1U);
     if (status != BOARD_OK) {
         fail_test_step(ctx, TEST_RESULT_STATUS_NAND_READ_ERROR);
         return;
@@ -177,24 +189,26 @@ static void test_mode_read_step(SystemContext* ctx) {
 
     (void)memset(test->read_buffer, 0, sizeof(test->read_buffer));
 
-    status = board_nand_read_packet(test_bank_id(test->bank), test->block_index, test->read_buffer);
+    status = board_nand_read_packet(test_bank_id(test->bank), packet, test->read_buffer);
     if (status != BOARD_OK) {
         fail_test_step(ctx, TEST_RESULT_STATUS_NAND_READ_ERROR);
         return;
     }
 
-    test->current_address = test_packet_address(test->block_index);
+    test->current_address = test_packet_address(packet);
     test->stage = TEST_STAGE_COMPARE;
 }
 
 static void test_mode_compare_step(SystemContext* ctx) {
     TestContext* test = &ctx->test;
-    uint32_t address = test_packet_address(test->block_index);
+    uint32_t packet = test_global_packet(test);
+    uint32_t address = test_packet_address(packet);
     uint32_t errors = 0U;
+    uint64_t block_sum;
     size_t index;
     BoardStatus status;
 
-    for (index = 0U; index < TEST_MODE_BLOCK_SIZE; ++index) {
+    for (index = 0U; index < TEST_MODE_PACKET_SIZE; ++index) {
         if (test->write_buffer[index] != test->read_buffer[index]) {
             ++errors;
 
@@ -204,29 +218,39 @@ static void test_mode_compare_step(SystemContext* ctx) {
         }
     }
 
-    test->nerr[test->block_index] = (uint16_t)errors;
+    block_sum = (uint64_t)test->nerr[test->block_index] + (uint64_t)errors;
+    test->nerr[test->block_index] =
+        (block_sum > TEST_MODE_NERR_MAX) ? (uint32_t)TEST_MODE_NERR_MAX : (uint32_t)block_sum;
     test->total_errors += errors;
 
     if (errors > 0U) {
         test->result_status |= TEST_RESULT_STATUS_COMPARE_MISMATCH;
     }
 
-    ++test->block_index;
+    ++test->packet_in_block;
 
-    if (test->block_index >= TEST_MODE_BLOCK_COUNT) {
-        test->final_erase = true;
-
-        status = board_nand_erase_start(test_bank_id(test->bank));
-        if (status != BOARD_OK) {
-            fail_test_step(ctx, TEST_RESULT_STATUS_NAND_ERASE_ERROR);
-            return;
-        }
-
-        test->stage = TEST_STAGE_ERASE;
+    if (test->packet_in_block < TEST_MODE_PACKETS_PER_BLOCK) {
+        test->stage = TEST_STAGE_WRITE;
         return;
     }
 
-    test->stage = TEST_STAGE_WRITE;
+    test->packet_in_block = 0U;
+    ++test->block_index;
+
+    if (test->block_index < test->total_blocks) {
+        test->stage = TEST_STAGE_WRITE;
+        return;
+    }
+
+    test->final_erase = true;
+
+    status = board_nand_erase_start(test_bank_id(test->bank));
+    if (status != BOARD_OK) {
+        fail_test_step(ctx, TEST_RESULT_STATUS_NAND_ERASE_ERROR);
+        return;
+    }
+
+    test->stage = TEST_STAGE_ERASE;
 }
 
 static void test_mode_poll(SystemContext* ctx) {

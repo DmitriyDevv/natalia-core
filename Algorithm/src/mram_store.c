@@ -5,7 +5,32 @@
 
 #define MRAM_CONFIG_OFFSET 0x0000U
 #define MRAM_SERVICE_DATA_OFFSET 0x0100U
-#define MRAM_TEST_RESULT_OFFSET 0x0200U
+
+_Static_assert(TEST_MODE_NERR_BYTE_SIZE == BOARD_MRAM_TEST_RESULT_SIZE,
+               "Nerr packed size must match the Board_API test-result region");
+
+static uint8_t mram_store_nerr_buffer[TEST_MODE_NERR_BYTE_SIZE];
+
+static void pack_nerr(const uint32_t *nerr, uint8_t *out) {
+    uint32_t i;
+
+    for (i = 0U; i < TEST_MODE_BLOCK_COUNT; ++i) {
+        uint32_t value = (nerr[i] > TEST_MODE_NERR_MAX) ? TEST_MODE_NERR_MAX : nerr[i];
+        out[(i * 3U) + 0U] = (uint8_t)(value & 0xFFU);
+        out[(i * 3U) + 1U] = (uint8_t)((value >> 8U) & 0xFFU);
+        out[(i * 3U) + 2U] = (uint8_t)((value >> 16U) & 0xFFU);
+    }
+}
+
+static void unpack_nerr(const uint8_t *in, uint32_t *nerr) {
+    uint32_t i;
+
+    for (i = 0U; i < TEST_MODE_BLOCK_COUNT; ++i) {
+        nerr[i] = (uint32_t)in[(i * 3U) + 0U] |
+                  ((uint32_t)in[(i * 3U) + 1U] << 8U) |
+                  ((uint32_t)in[(i * 3U) + 2U] << 16U);
+    }
+}
 
 static BoardStatus get_valid_copy(uint8_t *copy_id) {
     MramStoreStatus status = {0};
@@ -178,9 +203,66 @@ BoardStatus mram_store_save_service_data(const MramStoreServiceData *service_dat
 }
 
 BoardStatus mram_store_save_test_result(const MramStoreTestResult *test_result) {
+    BoardStatus status;
+
     if (test_result == 0) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    return write_both_copies(MRAM_TEST_RESULT_OFFSET, test_result, sizeof(*test_result));
+    if ((test_result->bank != 1U) && (test_result->bank != 2U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    pack_nerr(test_result->nerr, mram_store_nerr_buffer);
+
+    status = board_mram_write_test_result(MRAM_COPY_1, test_result->bank,
+                                          mram_store_nerr_buffer,
+                                          TEST_MODE_NERR_BYTE_SIZE);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = wait_write_interval();
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    return board_mram_write_test_result(MRAM_COPY_2, test_result->bank,
+                                        mram_store_nerr_buffer,
+                                        TEST_MODE_NERR_BYTE_SIZE);
+}
+
+BoardStatus mram_store_load_test_result(uint8_t bank, MramStoreTestResult *test_result) {
+    uint8_t is_valid = 0U;
+    BoardStatus status;
+
+    if (test_result == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if ((bank != 1U) && (bank != 2U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = board_mram_read_test_result(MRAM_COPY_1, bank,
+                                         mram_store_nerr_buffer,
+                                         TEST_MODE_NERR_BYTE_SIZE, &is_valid, NULL);
+    if ((status == BOARD_OK) && (is_valid == 0U)) {
+        status = board_mram_read_test_result(MRAM_COPY_2, bank,
+                                             mram_store_nerr_buffer,
+                                             TEST_MODE_NERR_BYTE_SIZE, &is_valid, NULL);
+    }
+
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    if (is_valid == 0U) {
+        return BOARD_ERR_CRC;
+    }
+
+    unpack_nerr(mram_store_nerr_buffer, test_result->nerr);
+    test_result->bank = bank;
+
+    return BOARD_OK;
 }

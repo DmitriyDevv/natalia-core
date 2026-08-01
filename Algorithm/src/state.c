@@ -148,7 +148,7 @@ static SystemState handle_duty_event(SystemContext* ctx, const SystemEvent* even
     case EVENT_CMD_SET_CFG:
         result = action_apply_config(ctx, event);
         if (result == ACTION_OK) {
-            result = action_write_mram(ctx);
+            result = action_write_mram(ctx, event);
         }
         if (result == ACTION_OK) {
             result = action_recalc_masked_alarm(ctx);
@@ -181,11 +181,22 @@ static SystemState handle_duty_event(SystemContext* ctx, const SystemEvent* even
     // 109
     case EVENT_CMD_DUMP:
         result = action_start_dump(ctx, event);
-        return finish_command_transition(ctx, event, result, STATE_DUMP);
+        if (result == ACTION_OK) {
+            (void)action_send_dump_ack(ctx, event);
+            transition_to(ctx, STATE_DUMP);
+            (void)action_send_status(ctx);
+            return ctx->state;
+        }
+        (void)action_send_ack_status(event, ack_status_from_result(result));
+        if (result == ACTION_ALARM) {
+            enter_alarm(ctx);
+        }
+        return ctx->state;
 
     // 110
     case EVENT_CMD_TEST_RESULT:
-        result = action_send_test_result();
+        result = action_send_test_result(event->command.test_result.bank,
+                                         event->command.test_result.mram_copy);
         return finish_command_result(ctx, event, result);
 
     // 111
@@ -233,7 +244,7 @@ static SystemState handle_erase_event(SystemContext* ctx, const SystemEvent* eve
             result = action_clear_nand_full_flag(ctx);
         }
         if (result == ACTION_OK) {
-            result = action_update_service_data(ctx);
+            result = action_update_erase_service_data(ctx);
         }
         if (result == ACTION_OK) {
             result = action_finish_erase(ctx, event);
@@ -306,7 +317,7 @@ static SystemState handle_test_event(SystemContext* ctx, const SystemEvent* even
     case EVENT_TEST_DONE:
         result = action_update_test_results(ctx);
         if ((result == ACTION_OK) && ctx->test.result_valid) {
-            result = action_update_service_data(ctx);
+            result = action_update_test_service_data(ctx);
         }
         if (result == ACTION_OK) {
             result = action_finish_test(ctx, event);
@@ -474,7 +485,7 @@ static SystemState handle_dump_event(SystemContext* ctx, const SystemEvent* even
     case EVENT_DUMP_DONE:
         result = action_fix_dump_results(ctx);
         if (result == ACTION_OK) {
-            result = action_update_service_data(ctx);
+            result = action_update_dump_service_data(ctx);
         }
         if (result == ACTION_OK) {
             result = action_finish_dump(ctx, event);
@@ -496,11 +507,17 @@ static SystemState handle_dump_event(SystemContext* ctx, const SystemEvent* even
     // 502
     case EVENT_CMD_DUTY:
         result = action_finish_dump(ctx, event);
+        if (result == ACTION_OK) {
+            result = action_update_dump_service_data(ctx);
+        }
         return finish_command_transition(ctx, event, result, STATE_DUTY);
 
     // 503
     case EVENT_CMD_SHUTDOWN:
         result = action_finish_dump(ctx, event);
+        if (result == ACTION_OK) {
+            result = action_update_dump_service_data(ctx);
+        }
         if (result == ACTION_OK) {
             result = action_start_shutdown(ctx);
         }
@@ -559,7 +576,7 @@ static SystemState handle_alarm_event(SystemContext* ctx, const SystemEvent* eve
     case EVENT_CMD_SET_CFG:
         result = action_apply_config(ctx, event);
         if (result == ACTION_OK) {
-            result = action_write_mram(ctx);
+            result = action_write_mram(ctx, event);
         }
         if (result == ACTION_OK) {
             result = action_recalc_masked_alarm(ctx);

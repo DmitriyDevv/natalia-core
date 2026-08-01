@@ -1,3 +1,9 @@
+# Host tests rely on assert() to check behavior. The project forces
+# CMAKE_BUILD_TYPE=RelWithDebInfo, which defines NDEBUG and would compile every
+# assert() to nothing. Undefine NDEBUG for all test targets so assertions run
+# regardless of the inherited build type.
+add_compile_options(-UNDEBUG)
+
 add_executable(test_state_machine
         test_state_machine.c
 )
@@ -45,3 +51,99 @@ target_compile_options(test_observe PRIVATE
 )
 
 add_test(NAME test_observe COMMAND test_observe)
+
+add_executable(test_mram_store
+        test_mram_store.c
+)
+
+target_link_libraries(test_mram_store PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_mram_store PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_mram_store COMMAND test_mram_store)
+
+add_executable(test_set_cfg
+        test_set_cfg.c
+)
+
+target_link_libraries(test_set_cfg PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_set_cfg PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_set_cfg COMMAND test_set_cfg)
+
+add_executable(test_mode_test
+        test_mode_test.c
+)
+
+target_link_libraries(test_mode_test PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_mode_test PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_mode_test COMMAND test_mode_test)
+
+add_executable(test_shutdown
+        test_shutdown.c
+)
+
+target_link_libraries(test_shutdown PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_shutdown PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_shutdown COMMAND test_shutdown)
+
+add_executable(test_erase
+        test_erase.c
+)
+
+target_link_libraries(test_erase PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_erase PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_erase COMMAND test_erase)
+
+add_executable(test_dump
+        test_dump.c
+)
+
+target_link_libraries(test_dump PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_dump PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_dump COMMAND test_dump)

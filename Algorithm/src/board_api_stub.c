@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "board_comm_stub.h"
+#include "board_stub.h"
 #include "dump_mode_config.h"
 #include "test_mode_config.h"
 
@@ -24,8 +25,15 @@ static uint8_t board_stub_nand_is_powered[BOARD_STUB_NAND_BANK_COUNT];
 static uint8_t board_stub_nand_is_connected[BOARD_STUB_NAND_BANK_COUNT];
 
 static uint8_t board_stub_mram[BOARD_STUB_MRAM_COPY_COUNT][BOARD_STUB_MRAM_COPY_SIZE];
+static uint8_t board_stub_mram_test_result[BOARD_STUB_MRAM_COPY_COUNT][2][BOARD_MRAM_TEST_RESULT_SIZE];
 
 static uint8_t board_stub_initialized;
+
+static bool board_stub_mram_write_fail;
+
+void board_stub_set_mram_write_fail(bool fail) {
+    board_stub_mram_write_fail = fail;
+}
 
 static void board_stub_init_once(void) {
     if (board_stub_initialized == 0U) {
@@ -206,6 +214,10 @@ BoardStatus board_mram_write(uint8_t copy_id, uint32_t offset, const void *buffe
         return status;
     }
 
+    if (board_stub_mram_write_fail) {
+        return BOARD_ERR_IO;
+    }
+
     if (size > 0U) {
         (void)memcpy(&board_stub_mram[copy_index][(size_t)offset], buffer, size);
     }
@@ -255,6 +267,79 @@ BoardStatus board_mram_restore_copy(uint8_t source_copy_id, uint8_t target_copy_
     (void)memcpy(board_stub_mram[target_index],
                  board_stub_mram[source_index],
                  BOARD_STUB_MRAM_COPY_SIZE);
+
+    return BOARD_OK;
+}
+
+BoardStatus board_mram_write_test_result(uint8_t copy_id,
+                                         uint8_t nand_bank,
+                                         const void *data,
+                                         size_t size) {
+    size_t copy_index;
+    BoardStatus status;
+
+    if ((data == NULL) || (size != BOARD_MRAM_TEST_RESULT_SIZE)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if ((nand_bank != 1U) && (nand_bank != 2U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    board_stub_init_once();
+
+    status = board_stub_get_mram_index(copy_id, &copy_index);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    (void)memcpy(board_stub_mram_test_result[copy_index][nand_bank - 1U],
+                 data, size);
+
+    return BOARD_OK;
+}
+
+BoardStatus board_mram_read_test_result(uint8_t copy_id,
+                                        uint8_t nand_bank,
+                                        void *data,
+                                        size_t size,
+                                        uint8_t *is_valid,
+                                        uint8_t *crc_out) {
+    size_t copy_index;
+    BoardStatus status;
+
+    if ((data == NULL) || (size != BOARD_MRAM_TEST_RESULT_SIZE) || (is_valid == NULL)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if ((nand_bank != 1U) && (nand_bank != 2U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    board_stub_init_once();
+
+    status = board_stub_get_mram_index(copy_id, &copy_index);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    (void)memcpy(data,
+                 board_stub_mram_test_result[copy_index][nand_bank - 1U],
+                 size);
+    *is_valid = 1U;
+
+    if (crc_out != NULL) {
+        const uint8_t *bytes = (const uint8_t *)data;
+        uint16_t checksum = 0U;
+        size_t index;
+
+        for (index = 0U; index < size; ++index) {
+            checksum = (uint16_t)(checksum + bytes[index]);
+        }
+
+        crc_out[0] = (uint8_t)(checksum & 0xFFU);
+        crc_out[1] = (uint8_t)((checksum >> 8) & 0xFFU);
+    }
 
     return BOARD_OK;
 }

@@ -171,11 +171,42 @@ typedef struct {
 } CmdSetTime;
 
 typedef struct {
-    uint32_t config_id;
+    uint16_t write_control;
+    int16_t mcu_pu_temp_min;
+    int16_t mcu_pu_temp_max;
+    int16_t pu_temp_min;
+    int16_t pu_temp_max;
+    int16_t ped_temp_min;
+    int16_t ped_temp_max;
+    int16_t det_temp_min;
+    int16_t det_temp_max;
+    uint16_t pu_voltage_min;
+    uint16_t pu_voltage_max;
+    uint16_t pu_current_min;
+    uint16_t pu_current_max;
+    uint16_t ped_voltage_min;
+    uint16_t ped_voltage_max;
+    uint16_t ped_current_min;
+    uint16_t ped_current_max;
+    int16_t belt_lmin;
+    int16_t belt_lmax;
+    int16_t belt_bmin;
+    uint16_t ac1_rate_max;
+    uint32_t init_rtc_time;
+    uint16_t observe_session_id;
+    uint32_t nand1_packet_count;
+    uint32_t nand2_packet_count;
+    uint16_t nand1_erase_count;
+    uint16_t nand2_erase_count;
+    uint16_t nand1_test_count;
+    uint16_t nand2_test_count;
+    uint16_t alarm_mask;
+    uint16_t can_control;
 } CmdSetConfig;
 
 typedef struct {
     NandBank bank;
+    uint8_t mram_copy;
 } CmdTestResult;
 
 typedef union {
@@ -232,12 +263,14 @@ typedef struct {
     uint32_t test_mask;
     uint32_t current_address;
     uint32_t block_index;
+    uint32_t packet_in_block;
+    uint32_t total_blocks;
     uint32_t result_status;
     uint32_t total_errors;
     uint32_t failed_address;
-    uint16_t nerr[TEST_MODE_BLOCK_COUNT];
-    uint8_t write_buffer[TEST_MODE_BLOCK_SIZE];
-    uint8_t read_buffer[TEST_MODE_BLOCK_SIZE];
+    uint32_t nerr[TEST_MODE_BLOCK_COUNT];
+    uint8_t write_buffer[TEST_MODE_PACKET_SIZE];
+    uint8_t read_buffer[TEST_MODE_PACKET_SIZE];
     bool result_valid;
     bool operation_failed;
     bool finish_requested;
@@ -317,6 +350,7 @@ typedef struct {
     uint32_t alarm_mask;
     uint32_t masked_alarm;
     uint16_t observe_session_id;
+    uint16_t can_control;
     NandRuntimeState nand1;
     NandRuntimeState nand2;
     PedRuntimeState ped;

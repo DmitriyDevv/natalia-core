@@ -33,6 +33,14 @@ target_link_libraries(natalia_bsp PUBLIC
         natalia_cmsis
 )
 
+# BSP (e.g. RTC/src/rtc_config.c) calls timebase_* from natalia_core. Without
+# this link dependency the timebase object is only pulled in when the firmware
+# main happens to reference it (as main.c does), so any other firmware main
+# fails to link. natalia_core exists only in firmware (non-test) builds.
+if (TARGET natalia_core)
+    target_link_libraries(natalia_bsp PUBLIC natalia_core)
+endif()
+
 target_compile_definitions(natalia_bsp PUBLIC
         QSPI_TARGET_HZ=${NATALIA_QSPI_TARGET_HZ}
         QSPI_DMA_AUTO_MIN_SIZE=${NATALIA_QSPI_DMA_AUTO_MIN_SIZE}

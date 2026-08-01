@@ -15,12 +15,16 @@ typedef enum {
     TRANSPORT_ACK_ERR_OTHER   = 0x09U
 } TransportAckStatus;
 
+void transport_reset(void);
+
 BoardStatus transport_poll(SystemContext *ctx, uint32_t now_ms);
 
 BoardStatus transport_send_ack(uint16_t command_id, TransportAckStatus status);
+BoardStatus transport_send_dump_ack(uint16_t command_id, TransportAckStatus status,
+                                    uint32_t packet_count);
 
 BoardStatus transport_send_status(const SystemContext *ctx);
 BoardStatus transport_send_telemetry(void);
-BoardStatus transport_send_test_result(void);
+BoardStatus transport_send_test_result(const uint8_t *data, uint16_t length);
 
 #endif /* NATALIA_CORE_TRANSPORT_H */

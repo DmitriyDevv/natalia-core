@@ -57,10 +57,17 @@ BoardStatus board_init_hardware(void);
 BoardStatus board_enter_safe_config(void);
 BoardStatus board_disconnect_signal_lines(BoardSignalTarget target);
 
+#define BOARD_MRAM_TEST_RESULT_SIZE 6144U
+#define BOARD_MRAM_TEST_RESULT_CRC_SIZE 2U
+#define BOARD_MRAM_TEST_RESULT_IMAGE_SIZE (BOARD_MRAM_TEST_RESULT_SIZE + BOARD_MRAM_TEST_RESULT_CRC_SIZE)
+
 BoardStatus board_mram_read(uint8_t copy_id, uint32_t offset, void* buffer, size_t size);
 BoardStatus board_mram_write(uint8_t copy_id, uint32_t offset, const void* buffer, size_t size);
 BoardStatus board_mram_check_crc(uint8_t copy_id, uint8_t* is_valid);
 BoardStatus board_mram_restore_copy(uint8_t source_copy_id, uint8_t target_copy_id);
+
+BoardStatus board_mram_write_test_result(uint8_t copy_id, uint8_t nand_bank, const void* data, size_t size);
+BoardStatus board_mram_read_test_result(uint8_t copy_id, uint8_t nand_bank, void* data, size_t size, uint8_t* is_valid, uint8_t* crc_out);
 
 BoardStatus board_nand_power_on(uint8_t bank_id);
 BoardStatus board_nand_power_off(uint8_t bank_id);
@@ -128,7 +135,7 @@ BoardStatus board_read_power_status(uint32_t* power_status);
 BoardStatus board_power_monitor_init(void);
 BoardStatus board_read_power_monitor(BoardPowerMonitorId monitor, BoardPowerSample* sample);
 
-#define BOARD_COMM_MAX_MESSAGE_DATA (6144U)
+#define BOARD_COMM_MAX_MESSAGE_DATA (6146U)
 #define BOARD_COMM_ADDR_NA          (0x1EU)
 #define BOARD_COMM_ADDR_BVS         (0x05U)
 
