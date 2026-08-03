@@ -9,7 +9,6 @@ target_sources(natalia_algorithm PRIVATE
         src/tlm_staging.c
         src/mram_store.c
         src/event_queue.c
-#        src/mode_erase.c
 )
 
 target_include_directories(natalia_algorithm PUBLIC

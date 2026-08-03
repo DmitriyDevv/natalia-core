@@ -32,6 +32,10 @@ DMA, IRQ и внутренностях драйверов. Если алгори
   `NATALIA_USE_BOARD_STUBS=ON` те же функции реализованы заглушками
   (`Algorithm/src/board_api_stub.c`); при отключённом драйвере реальная сборка
   возвращает предсказуемый статус (обычно `BOARD_ERR_UNSUPPORTED`).
+  Заглушка моделирует не всё: часть функций отдаёт константы. Полный разбор —
+  в разделе «Поведение хостовой заглушки» ниже. Читайте его перед тем, как
+  писать хостовый тест: иначе легко принять константу заглушки за проверенное
+  поведение.
 - Board_API **не** содержит логики автомата, не знает переходов режимов, не
   вызывает `handle_event()` и не кладёт события в очередь.
 - Длительные операции неблокирующие: запуск + опрос завершения (см. NAND).
@@ -738,6 +742,164 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 
 ---
 
+## Поведение хостовой заглушки
+
+`Algorithm/src/board_api_stub.c`, флаг `NATALIA_USE_BOARD_STUBS=ON`. Реализует
+все функции этого документа, поэтому уровень `Algorithm` собирается и работает
+на обычном ПК без кросс-компилятора и без платы.
+
+Заглушка **детерминированная**: одинаковые вызовы всегда дают одинаковый
+результат, случайных отказов и задержек нет. Проверка аргументов (NULL, номер
+копии/банка, выход за границу) выполняется по-настоящему и возвращает
+`BOARD_ERR_INVALID_ARG` — это единственный класс ошибок, который заглушка
+порождает сама.
+
+### Параметры модели
+
+| Параметр | Значение в заглушке | На плате |
+| --- | ---: | ---: |
+| Банков NAND | 2 | 2 |
+| Ёмкость банка, пакетов | **64** | 262144 |
+| Размер пакета, байт | 2048 | 2048 |
+| Копий MRAM | 2 | 2 |
+| Размер копии, байт | 1024 | 1024 (`BOARD_MRAM_COPY_SIZE`) |
+
+Область конфигурации совпадает с полётной, различаются только NAND: ёмкость
+банка в заглушке меньше почти в 4000 раз.
+
+Ёмкость банка задана `BOARD_STUB_NAND_PACKET_COUNT`. Разница с полётной почти
+в 4000 раз — режим TEST, который работает блоками по 128 пакетов, на хосте
+выполняет ноль блоков.
+
+Инициализация выполняется один раз за процесс (`board_stub_init_once`): NAND
+заполняется `0xFF`, MRAM — нулями. **Функции полного сброса нет**, поэтому
+внутри одного тестового бинарника состояние NAND и MRAM переносится из теста в
+тест.
+
+### Система
+
+| Функция | Поведение |
+| --- | --- |
+| `board_init_hardware` | Инициализирует модель, `BOARD_OK`. |
+| `board_enter_safe_config` | `BOARD_OK`, ничего не делает. |
+| `board_disconnect_signal_lines` | `BOARD_OK`, ничего не делает. |
+
+### MRAM
+
+| Функция | Поведение |
+| --- | --- |
+| `board_mram_read` / `board_mram_write` | Настоящее чтение/запись массива в ОЗУ с проверкой границ копии (1024 байта). |
+| `board_mram_check_crc` | **Всегда `is_valid = 1`.** Путь «обе копии испорчены -> `ALARM_MRAM`» на хосте недостижим. |
+| `board_mram_restore_copy` | Настоящее копирование копии в копию. |
+| `board_mram_write_test_result` / `board_mram_read_test_result` | Настоящие, отдельная область на банк и копию. |
+
+Отказ записи включается тестом: `board_stub_set_mram_write_fail(true)` заставляет
+`board_mram_write` возвращать `BOARD_ERR_IO` (объявление — `Algorithm/include/board_stub.h`).
+
+### NAND
+
+| Функция | Поведение |
+| --- | --- |
+| `board_nand_power_on` / `_off`, `_connect` / `_disconnect` | Меняют флаги модели, `BOARD_OK`. |
+| `board_nand_is_powered` | **Всегда `1`.** Отказ подтверждения питания не моделируется. |
+| `board_nand_read` / `board_nand_write` | Настоящие, с проверкой границ банка. |
+| `board_nand_open_write` | Задаёт стартовый счётчик пакетов; выставляет признак заполнения, если счётчик достиг ёмкости. |
+| `board_nand_write_packet` | Настоящая запись 2048 байт, инкремент счётчика. При заполненном банке — `BOARD_ERR_IO` и признак заполнения. |
+| `board_nand_write_poll` / `board_nand_write_flush` | **Всегда `is_idle` / `is_done` = 1** — запись мгновенная. |
+| `board_nand_open_read` / `board_nand_read_packet` / `board_nand_read_next_packet` | Настоящие, потоковое чтение с внутренним индексом. |
+| `board_nand_get_capacity_packets` | Всегда `64`. |
+| `board_nand_get_committed_packet_count` | Настоящий счётчик. |
+| `board_nand_erase_start` | Настоящее стирание: `0xFF`, сброс счётчиков и признака заполнения. |
+| `board_nand_erase_is_done` | **Всегда `is_done = 1`** — стирание мгновенное, таймауты не проверить. |
+| `board_nand_is_full` | Настоящий признак модели. |
+
+### ПЭД
+
+Функционально не моделируется. Все функции возвращают `BOARD_OK`:
+
+| Функция | Значение |
+| --- | --- |
+| `board_ped_power_on` / `_off`, `board_ped_reg_init`, `board_ped_set_inhibit`, `board_ped_set_sleep`, `board_ped_reset_trigger`, `board_ped_write_config` | Ничего не делают. |
+| `board_ped_is_powered` | `1` |
+| `board_ped_read_status` | `0` |
+| `board_ped_read_event` | `bytes_read = 0` |
+| `board_ped_take_trigger_events` | **`0`** — триггеры не моделируются |
+
+### RTC
+
+| Функция | Поведение |
+| --- | --- |
+| `board_rtc_get_time` | **Всегда `0 с, 0 мс`** — время не идёт. |
+| `board_rtc_set_time` | `BOARD_OK`; отвергает `milliseconds >= 1000`. Значение не запоминается. |
+| `board_rtc_take_1hz_events` | **`0`** — секундные события не моделируются. |
+
+Всё, что зависит от хода времени, на хосте не проверяется.
+
+### Датчики
+
+| Функция | Значение |
+| --- | --- |
+| `board_read_temp` / `board_read_temp_milli_c` | `25000` м°C, `ready = 1`, `range_valid = 1` |
+| `board_read_digital_temp` / `board_read_digital_temp_milli_c` | `25000` м°C для обоих датчиков (`sensor` игнорируется) |
+| `board_read_power_monitor` | `bus_voltage_mv = 3300`, остальное — нули (`monitor` игнорируется) |
+| `board_read_power_status` | `0` |
+| `board_temp_init` / `_start` / `_stop`, `board_temp_digital_init`, `board_power_monitor_init` | `BOARD_OK` |
+
+Выхода за пороги ни один датчик не выдаёт, поэтому мониторинг аварий проверить
+через заглушку нельзя.
+
+### Вывод данных
+
+| Функция | Поведение |
+| --- | --- |
+| `board_usb_write` / `board_data_write` | **Принимают всё**: `bytes_written = size`, данные никуда не сохраняются. |
+| `board_usb_is_ready` / `board_data_is_ready` | **Всегда `1`.** |
+
+Отказ и частичная запись не моделируются — путь повторов в DUMP не покрывается.
+
+Стендовые хуки `board_usb_test_capture_*` (при `NATALIA_ENABLE_BOARD_TEST_HOOKS=ON`)
+возвращают нули.
+
+### Связь
+
+Настоящая модель на **один слот** приёма и **один слот** передачи.
+
+| Функция | Поведение |
+| --- | --- |
+| `board_comm_init` | Сбрасывает слоты, `BOARD_OK`. |
+| `board_comm_close` / `board_comm_poll` | Ничего не делают. |
+| `board_comm_send` | Сохраняет сообщение в слот передачи, увеличивает счётчик. |
+| `board_comm_receive` | Отдаёт ожидающее сообщение и снимает признак; если его нет — `BOARD_ERR_NOT_READY`. |
+| `board_comm_get_status` | `is_online = true`, `tx_busy = false`, `tx_messages_failed = 0`. |
+
+Управление из теста (`Algorithm/include/board_comm_stub.h`):
+
+```c
+void     board_comm_stub_reset(void);
+void     board_comm_stub_inject_rx(uint16_t message_id, uint16_t address_from,
+                                   uint16_t address_to, const uint8_t* data,
+                                   uint16_t length);
+uint32_t board_comm_stub_tx_count(void);
+bool     board_comm_stub_last_tx(uint16_t* message_id, uint16_t* address_to,
+                                 uint8_t* buffer, uint16_t capacity,
+                                 uint16_t* length);
+```
+
+Оба слота одиночные: второй `inject_rx` до вызова `transport_poll()` затирает
+первый, а `board_comm_stub_last_tx()` отдаёт только последнее переданное
+сообщение. Чтобы проверить несколько ответов подряд, разбирайте их по шагам,
+сверяясь с `board_comm_stub_tx_count()`.
+
+### Сводка ограничений
+
+Через хостовую заглушку **нельзя** проверить: обработку неверной CRC в MRAM,
+таймауты и отказы NAND, отказ подтверждения питания, отказы и повторы вывода
+данных, ход времени, секундные тики RTC, триггеры ПЭД, выход параметров за
+пороги. Для этого нужна либо доработка заглушки, либо стендовая проверка
+(`tests/firmware/`).
+
+---
+
 ## Реализации
 
 Одна и та же сигнатура имеет две реализации; при изменении API нужно править обе:
@@ -746,4 +908,6 @@ board_ped_take_trigger_events(&count);                 // забрать три�
   соответствующими флагами `NATALIA_ENABLE_*_DRIVER`; при отключённом драйвере —
   детерминированная заглушка / RAM-фолбэк);
 - `Algorithm/src/board_api_stub.c` — хостовая заглушка для тестов
-  (`NATALIA_USE_BOARD_STUBS=ON`).
+  (`NATALIA_USE_BOARD_STUBS=ON`), описана выше.
+
+Использование Board_API уровнем `Algorithm` — в [`Algorithm.md`](Algorithm.md).
