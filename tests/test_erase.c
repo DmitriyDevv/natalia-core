@@ -11,10 +11,10 @@
 #include "state.h"
 #include "transport.h"
 
-#define KU_STATUS_REQ_MSG_ID (0x0001U)
-#define KU_TEST_MSG_ID       (0x0009U)
-#define TS_STATUS_MSG_ID     (0x0200U)
-#define TS_ACK_MSG_ID        (0x0201U)
+#define KU_STATUS_REQ_MSG_ID (0x0F01U)
+#define KU_TEST_MSG_ID       (0x0F09U)
+#define TS_STATUS_MSG_ID     (0x0D00U)
+#define TS_ACK_MSG_ID        (0x0D01U)
 #define ACK_ERR_MODE         (0x07U)
 #define SHORT_PAYLOAD_SIZE   (6U)
 #define FILL_BYTE            (0xAAU)

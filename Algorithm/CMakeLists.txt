@@ -2,6 +2,7 @@ add_library(natalia_algorithm STATIC)
 
 target_sources(natalia_algorithm PRIVATE
         src/actions.c
+        src/alarm_monitor.c
         src/algorithm.c
         src/state.c
         src/observe.c
@@ -33,11 +34,10 @@ if (NATALIA_USE_BOARD_STUBS)
             NATALIA_USE_BOARD_STUBS=1
     )
 else ()
-    if (NOT NATALIA_ENABLE_UNICAN_DRIVER)
-        message(FATAL_ERROR
-                "Real transport requires -DNATALIA_ENABLE_UNICAN_DRIVER=ON"
-        )
-    endif ()
+    # Algorithm depends only on the Board_API communication contract
+    # (board_comm_*). The concrete backend (UniCAN, or the deterministic
+    # disabled-comm fallback) is selected inside natalia_board_api_impl, so the
+    # Algorithm library must not reference NATALIA_ENABLE_UNICAN_DRIVER here.
 
     if (NATALIA_ENABLE_DETECTOR_PROTO_LOG)
         target_link_libraries(natalia_algorithm PRIVATE

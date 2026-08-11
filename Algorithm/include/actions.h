@@ -36,7 +36,8 @@ ActionResult action_send_dump_ack(const SystemContext* ctx, const SystemEvent* e
 
 ActionResult action_send_ack_status(const SystemEvent* event, TransportAckStatus status);
 
-ActionResult action_send_telem(void);
+ActionResult action_send_telem(const SystemContext *ctx);
+ActionResult action_send_version(void);
 
 ActionResult action_set_time(const SystemEvent* event);
 

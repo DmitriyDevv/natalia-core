@@ -3,6 +3,7 @@
 
 #include "state.h"
 
+void algorithm_collect_hw_events(SystemContext *ctx);
 void algorithm_poll(SystemContext *ctx);
 void algorithm_process_events(SystemContext *ctx);
 

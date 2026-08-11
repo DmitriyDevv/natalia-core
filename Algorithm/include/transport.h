@@ -17,6 +17,8 @@ typedef enum {
 
 void transport_reset(void);
 
+void transport_apply_stored_addresses(uint16_t device_id, uint16_t destination_id);
+
 BoardStatus transport_poll(SystemContext *ctx, uint32_t now_ms);
 
 BoardStatus transport_send_ack(uint16_t command_id, TransportAckStatus status);
@@ -24,7 +26,8 @@ BoardStatus transport_send_dump_ack(uint16_t command_id, TransportAckStatus stat
                                     uint32_t packet_count);
 
 BoardStatus transport_send_status(const SystemContext *ctx);
-BoardStatus transport_send_telemetry(void);
+BoardStatus transport_send_telemetry(const SystemContext *ctx);
+BoardStatus transport_send_version(void);
 BoardStatus transport_send_test_result(const uint8_t *data, uint16_t length);
 
 #endif /* NATALIA_CORE_TRANSPORT_H */

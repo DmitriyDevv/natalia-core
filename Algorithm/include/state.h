@@ -34,6 +34,7 @@ typedef enum {
     EVENT_CMD_TEST_RESULT,
     EVENT_CMD_SHUTDOWN,
     EVENT_CMD_RESET_ALARM,
+    EVENT_CMD_VERSION_REQ,
 
     EVENT_TLM_TIME_SYNC,
     EVENT_TLM_ORBIT,
@@ -192,6 +193,7 @@ typedef struct {
     int16_t belt_lmax;
     int16_t belt_bmin;
     uint16_t ac1_rate_max;
+    uint16_t init_rtc_time_ms;
     uint32_t init_rtc_time;
     uint16_t observe_session_id;
     uint32_t nand1_packet_count;
@@ -351,6 +353,21 @@ typedef struct {
     uint32_t masked_alarm;
     uint16_t observe_session_id;
     uint16_t can_control;
+
+    int16_t pu_temp_min;
+    int16_t pu_temp_max;
+    int16_t ped_temp_min;
+    int16_t ped_temp_max;
+    uint16_t pu_voltage_min;
+    uint16_t pu_voltage_max;
+    uint16_t pu_current_min;
+    uint16_t pu_current_max;
+    uint16_t ped_voltage_min;
+    uint16_t ped_voltage_max;
+    uint16_t ped_current_min;
+    uint16_t ped_current_max;
+    uint32_t alarm_monitor_last_ms;
+
     NandRuntimeState nand1;
     NandRuntimeState nand2;
     PedRuntimeState ped;

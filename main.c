@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "alarm.h"
+#include "alarm_monitor.h"
 #include "algorithm.h"
 #include "board_api.h"
 #include "clock.h"
@@ -31,6 +32,7 @@
 #include "test_mode_config.h"
 #include "timebase.h"
 #include "transport.h"
+#include "watchdog.h"
 
 #define MAIN_STAGE_LOG_INTERVAL_MS (1000UL)
 
@@ -202,21 +204,28 @@ int main(void) {
     status = board_comm_init();
     if (status != BOARD_OK) {
         log_status_code("board_comm_init error=", status);
-        halt();
+        debug_log_write("EVENT_INIT_FAIL\r\n");
+        pump_internal_event(&ctx, EVENT_INIT_FAIL);
+    } else {
+        debug_log_write("EVENT_INIT_DONE\r\n");
+        pump_internal_event(&ctx, EVENT_INIT_DONE);
     }
-
-    debug_log_write("EVENT_INIT_DONE\r\n");
-    pump_internal_event(&ctx, EVENT_INIT_DONE);
     log_context_line(&ctx);
 
     last_state = ctx.state;
     last_transport_status = BOARD_OK;
     last_stage_log_ms = timebase_millis();
 
+    if (watchdog_init() != BOARD_OK) {
+        log_status_code("watchdog_init error=", BOARD_ERR_TIMEOUT);
+    }
+
     debug_log_write("READY\r\n");
 
     while (1) {
         uint32_t now_ms = timebase_millis();
+
+        watchdog_kick();
 
         status = transport_poll(&ctx, now_ms);
         if (status != last_transport_status) {
@@ -224,6 +233,8 @@ int main(void) {
             last_transport_status = status;
         }
 
+        algorithm_collect_hw_events(&ctx);
+        alarm_monitor_poll(&ctx, now_ms);
         algorithm_poll(&ctx);
         algorithm_process_events(&ctx);
 

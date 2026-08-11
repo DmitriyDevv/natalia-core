@@ -31,8 +31,63 @@ static uint8_t board_stub_initialized;
 
 static bool board_stub_mram_write_fail;
 
+static uint8_t board_stub_test_result_valid[2] = {1U, 1U};
+
+static uint32_t board_stub_rtc_1hz_pending;
+static uint32_t board_stub_ped_trigger_pending;
+
+static int32_t board_stub_digital_temp_milli[2] = {25000, 25000};
+static uint8_t board_stub_digital_temp_ready[2] = {1U, 1U};
+static uint8_t board_stub_digital_temp_valid[2] = {1U, 1U};
+static uint32_t board_stub_power_mv[2] = {3300U, 3300U};
+static int32_t board_stub_power_ua[2] = {0, 0};
+static uint8_t board_stub_power_ready[2] = {1U, 1U};
+static uint8_t board_stub_ped_is_powered = 1U;
+
+static uint32_t board_stub_rtc_seconds;
+static uint16_t board_stub_rtc_milliseconds;
+
 void board_stub_set_mram_write_fail(bool fail) {
     board_stub_mram_write_fail = fail;
+}
+
+void board_stub_set_rtc_time(uint32_t seconds, uint16_t milliseconds) {
+    board_stub_rtc_seconds = seconds;
+    board_stub_rtc_milliseconds = milliseconds;
+}
+
+void board_stub_set_rtc_1hz_events(uint32_t count) {
+    board_stub_rtc_1hz_pending = count;
+}
+
+void board_stub_set_ped_trigger_events(uint32_t count) {
+    board_stub_ped_trigger_pending = count;
+}
+
+void board_stub_set_digital_temp(BoardTempSensorId sensor, int32_t milli_c,
+                                 bool valid) {
+    uint8_t idx = (sensor == BOARD_TEMP_SENSOR_PED) ? 1U : 0U;
+    board_stub_digital_temp_milli[idx] = milli_c;
+    board_stub_digital_temp_ready[idx] = valid ? 1U : 0U;
+    board_stub_digital_temp_valid[idx] = valid ? 1U : 0U;
+}
+
+void board_stub_set_power_monitor(BoardPowerMonitorId monitor, uint32_t mv,
+                                  int32_t ua, bool ready) {
+    uint8_t idx = (monitor == BOARD_POWER_MONITOR_PED) ? 1U : 0U;
+    board_stub_power_mv[idx] = mv;
+    board_stub_power_ua[idx] = ua;
+    board_stub_power_ready[idx] = ready ? 1U : 0U;
+}
+
+void board_stub_set_ped_powered(bool powered) {
+    board_stub_ped_is_powered = powered ? 1U : 0U;
+}
+
+void board_stub_set_test_result_valid(uint8_t nand_bank, bool valid) {
+    if ((nand_bank == 1U) || (nand_bank == 2U)) {
+        board_stub_test_result_valid[nand_bank - 1U] = valid ? 1U : 0U;
+    }
 }
 
 static void board_stub_init_once(void) {
@@ -326,7 +381,7 @@ BoardStatus board_mram_read_test_result(uint8_t copy_id,
     (void)memcpy(data,
                  board_stub_mram_test_result[copy_index][nand_bank - 1U],
                  size);
-    *is_valid = 1U;
+    *is_valid = board_stub_test_result_valid[nand_bank - 1U];
 
     if (crc_out != NULL) {
         const uint8_t *bytes = (const uint8_t *)data;
@@ -795,7 +850,7 @@ BoardStatus board_ped_is_powered(uint8_t *is_powered) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    *is_powered = 1U;
+    *is_powered = board_stub_ped_is_powered;
 
     return BOARD_OK;
 }
@@ -855,7 +910,8 @@ BoardStatus board_ped_take_trigger_events(uint32_t *event_count) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    *event_count = 0U;
+    *event_count = board_stub_ped_trigger_pending;
+    board_stub_ped_trigger_pending = 0U;
 
     return BOARD_OK;
 }
@@ -865,8 +921,8 @@ BoardStatus board_rtc_get_time(InstrumentTime *time) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    time->seconds = 0U;
-    time->milliseconds = 0U;
+    time->seconds = board_stub_rtc_seconds;
+    time->milliseconds = board_stub_rtc_milliseconds;
 
     return BOARD_OK;
 }
@@ -946,7 +1002,8 @@ BoardStatus board_rtc_take_1hz_events(uint32_t *event_count) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    *event_count = 0U;
+    *event_count = board_stub_rtc_1hz_pending;
+    board_stub_rtc_1hz_pending = 0U;
 
     return BOARD_OK;
 }
@@ -992,7 +1049,7 @@ BoardStatus board_temp_digital_init(void) {
 }
 
 BoardStatus board_read_digital_temp(BoardTempSensorId sensor, BoardDigitalTempSample *sample) {
-    (void)sensor;
+    uint8_t idx = (sensor == BOARD_TEMP_SENSOR_PED) ? 1U : 0U;
 
     if (sample == NULL) {
         return BOARD_ERR_INVALID_ARG;
@@ -1000,9 +1057,9 @@ BoardStatus board_read_digital_temp(BoardTempSensorId sensor, BoardDigitalTempSa
 
     memset(sample, 0, sizeof(*sample));
 
-    sample->temperature_milli_c = 25000;
-    sample->ready = 1U;
-    sample->range_valid = 1U;
+    sample->temperature_milli_c = board_stub_digital_temp_milli[idx];
+    sample->ready = board_stub_digital_temp_ready[idx];
+    sample->range_valid = board_stub_digital_temp_valid[idx];
 
     return BOARD_OK;
 }
@@ -1024,7 +1081,7 @@ BoardStatus board_power_monitor_init(void) {
 }
 
 BoardStatus board_read_power_monitor(BoardPowerMonitorId monitor, BoardPowerSample *sample) {
-    (void)monitor;
+    uint8_t idx = (monitor == BOARD_POWER_MONITOR_PED) ? 1U : 0U;
 
     if (sample == NULL) {
         return BOARD_ERR_INVALID_ARG;
@@ -1032,9 +1089,10 @@ BoardStatus board_read_power_monitor(BoardPowerMonitorId monitor, BoardPowerSamp
 
     memset(sample, 0, sizeof(*sample));
 
-    sample->bus_voltage_mv = 3300U;
-    sample->ready = 1U;
-    sample->conversion_ready = 1U;
+    sample->bus_voltage_mv = board_stub_power_mv[idx];
+    sample->current_ua = board_stub_power_ua[idx];
+    sample->ready = board_stub_power_ready[idx];
+    sample->conversion_ready = board_stub_power_ready[idx];
 
     return BOARD_OK;
 }

@@ -1,4 +1,5 @@
 #include "actions.h"
+#include "alarm_monitor.h"
 #include "mram_store.h"
 #include "observe.h"
 #include "tlm_staging.h"
@@ -191,7 +192,8 @@ static ActionResult prepare_single_nand_bank(SystemContext* ctx, NandBank bank) 
         return result;
     }
     if (is_powered == 0U) {
-        return ACTION_ERR_OTHER;
+        alarm_set(ctx, ALARM_NAND_PS);
+        return ACTION_ALARM;
     }
 
     if (nand != NULL) {
@@ -226,7 +228,8 @@ static ActionResult confirm_ped_powered(SystemContext* ctx) {
 
     if (is_powered == 0U) {
         ctx->ped.is_powered = false;
-        return ACTION_ERR_OTHER;
+        alarm_set(ctx, ALARM_PED_PS);
+        return ACTION_ALARM;
     }
 
     ctx->ped.is_powered = true;
@@ -285,6 +288,21 @@ ActionResult action_load_mram(SystemContext* ctx) {
     ctx->alarm_status = service_data.alarm_status & ALARM_ALL_MASK;
     ctx->masked_alarm = ctx->alarm_status & ctx->alarm_mask;
     ctx->can_control = config.can_control;
+
+    ctx->pu_temp_min = config.pu_temp_min;
+    ctx->pu_temp_max = config.pu_temp_max;
+    ctx->ped_temp_min = config.ped_temp_min;
+    ctx->ped_temp_max = config.ped_temp_max;
+    ctx->pu_voltage_min = config.pu_voltage_min;
+    ctx->pu_voltage_max = config.pu_voltage_max;
+    ctx->pu_current_min = config.pu_current_min;
+    ctx->pu_current_max = config.pu_current_max;
+    ctx->ped_voltage_min = config.ped_voltage_min;
+    ctx->ped_voltage_max = config.ped_voltage_max;
+    ctx->ped_current_min = config.ped_current_min;
+    ctx->ped_current_max = config.ped_current_max;
+
+    transport_apply_stored_addresses(config.device_id, config.destination_id);
 
     ctx->nand1.is_full = (service_data.nand1_full != 0U);
     ctx->nand2.is_full = (service_data.nand2_full != 0U);
@@ -419,8 +437,12 @@ ActionResult action_send_ack_status(const SystemEvent *event,
     );
 }
 
-ActionResult action_send_telem(void) {
-    return require_ok(transport_send_telemetry());
+ActionResult action_send_telem(const SystemContext *ctx) {
+    return require_ok(transport_send_telemetry(ctx));
+}
+
+ActionResult action_send_version(void) {
+    return require_ok(transport_send_version());
 }
 
 ActionResult action_set_time(const SystemEvent *event) {
@@ -441,6 +463,19 @@ ActionResult action_apply_config(SystemContext* ctx, const SystemEvent* event) {
 
     ctx->alarm_mask = alarm_sanitize_mask(cfg->alarm_mask);
     ctx->can_control = cfg->can_control;
+
+    ctx->pu_temp_min = cfg->pu_temp_min;
+    ctx->pu_temp_max = cfg->pu_temp_max;
+    ctx->ped_temp_min = cfg->ped_temp_min;
+    ctx->ped_temp_max = cfg->ped_temp_max;
+    ctx->pu_voltage_min = cfg->pu_voltage_min;
+    ctx->pu_voltage_max = cfg->pu_voltage_max;
+    ctx->pu_current_min = cfg->pu_current_min;
+    ctx->pu_current_max = cfg->pu_current_max;
+    ctx->ped_voltage_min = cfg->ped_voltage_min;
+    ctx->ped_voltage_max = cfg->ped_voltage_max;
+    ctx->ped_current_min = cfg->ped_current_min;
+    ctx->ped_current_max = cfg->ped_current_max;
 
     if ((cfg->write_control & (1U << 0U)) != 0U) {
         ctx->observe_session_id = cfg->observe_session_id;
@@ -484,8 +519,9 @@ ActionResult action_write_mram(const SystemContext* ctx, const SystemEvent* even
     config.belt_bmin = cfg->belt_bmin;
     config.ac1_rate_max = cfg->ac1_rate_max;
     config.init_rtc_time = cfg->init_rtc_time;
+    config.init_rtc_time_ms = cfg->init_rtc_time_ms;
     config.can_control = cfg->can_control;
-    config.alarm_mask = (uint16_t)(alarm_sanitize_mask(ctx->alarm_mask) & 0xFFFFU);
+    config.alarm_mask = (uint16_t)(alarm_sanitize_mask(cfg->alarm_mask) & 0xFFFFU);
 
     result = board_status_to_action(mram_store_save_config(&config));
     if (result != ACTION_OK) {
@@ -948,7 +984,9 @@ ActionResult action_send_test_result(NandBank bank, uint8_t mram_copy) {
         return require_ok(status);
     }
 
-    (void)is_valid;
+    if (is_valid == 0U) {
+        return ACTION_ERR_OTHER;
+    }
 
     return require_ok(transport_send_test_result(image,
                                                  (uint16_t)BOARD_MRAM_TEST_RESULT_IMAGE_SIZE));

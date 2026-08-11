@@ -116,6 +116,10 @@ option(NATALIA_ENABLE_BOARD_TEST_HOOKS
         "Enable temporary board test hooks"
         OFF)
 
+option(NATALIA_ENABLE_WATCHDOG
+        "Enable the IWDG independent watchdog in the flight main"
+        ON)
+
 set(NATALIA_QSPI_TARGET_HZ "40000000" CACHE STRING
         "QUADSPI target clock frequency"
 )

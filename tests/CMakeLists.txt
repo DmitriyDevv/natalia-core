@@ -147,3 +147,51 @@ target_compile_options(test_dump PRIVATE
 )
 
 add_test(NAME test_dump COMMAND test_dump)
+
+add_executable(test_admissibility
+        test_admissibility.c
+)
+
+target_link_libraries(test_admissibility PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_admissibility PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_admissibility COMMAND test_admissibility)
+
+add_executable(test_hw_events
+        test_hw_events.c
+)
+
+target_link_libraries(test_hw_events PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_hw_events PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_hw_events COMMAND test_hw_events)
+
+add_executable(test_alarm_monitor
+        test_alarm_monitor.c
+)
+
+target_link_libraries(test_alarm_monitor PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_alarm_monitor PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_alarm_monitor COMMAND test_alarm_monitor)

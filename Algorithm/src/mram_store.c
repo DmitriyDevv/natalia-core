@@ -173,6 +173,21 @@ BoardStatus mram_store_save_config(const MramStoreConfig *config) {
     return write_both_copies(MRAM_CONFIG_OFFSET, config, sizeof(*config));
 }
 
+BoardStatus mram_store_save_addresses(uint16_t device_id, uint16_t destination_id) {
+    MramStoreConfig config = {0};
+    BoardStatus status;
+
+    status = mram_store_load_config(&config);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    config.device_id = device_id;
+    config.destination_id = destination_id;
+
+    return mram_store_save_config(&config);
+}
+
 BoardStatus mram_store_load_service_data(MramStoreServiceData *service_data) {
     uint8_t copy_id = 0U;
     BoardStatus status;

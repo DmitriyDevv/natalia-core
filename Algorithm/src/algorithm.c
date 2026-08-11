@@ -476,6 +476,32 @@ static void observe_mode_poll(SystemContext *ctx) {
     }
 }
 
+void algorithm_collect_hw_events(SystemContext *ctx) {
+    uint32_t count;
+
+    if (ctx == NULL) {
+        return;
+    }
+
+    count = 0U;
+    if (board_rtc_take_1hz_events(&count) == BOARD_OK) {
+        while (count > 0U) {
+            (void)system_event_queue_push_back_type(EVENT_RTC_1HZ);
+            --count;
+        }
+    }
+
+    if (ctx->state == STATE_OBSERVE) {
+        count = 0U;
+        if (board_ped_take_trigger_events(&count) == BOARD_OK) {
+            while (count > 0U) {
+                (void)system_event_queue_push_back_type(EVENT_PED_TRIGGER);
+                --count;
+            }
+        }
+    }
+}
+
 void algorithm_poll(SystemContext *ctx) {
     if (ctx == NULL) {
         return;

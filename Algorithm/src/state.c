@@ -133,10 +133,15 @@ static SystemState handle_duty_event(SystemContext* ctx, const SystemEvent* even
         (void)action_send_status(ctx);
         return ctx->state;
 
+    case EVENT_CMD_VERSION_REQ:
+        (void)action_send_ack(event);
+        (void)action_send_version();
+        return ctx->state;
+
     // 101
     case EVENT_CMD_TELEM_REQ:
         (void)action_send_ack(event);
-        (void)action_send_telem();
+        (void)action_send_telem(ctx);
         return ctx->state;
 
     // 102
@@ -146,9 +151,9 @@ static SystemState handle_duty_event(SystemContext* ctx, const SystemEvent* even
 
     // 103 / 104
     case EVENT_CMD_SET_CFG:
-        result = action_apply_config(ctx, event);
+        result = action_write_mram(ctx, event);
         if (result == ACTION_OK) {
-            result = action_write_mram(ctx, event);
+            result = action_apply_config(ctx, event);
         }
         if (result == ACTION_OK) {
             result = action_recalc_masked_alarm(ctx);
@@ -263,6 +268,11 @@ static SystemState handle_erase_event(SystemContext* ctx, const SystemEvent* eve
         (void)action_send_status(ctx);
         return ctx->state;
 
+    case EVENT_CMD_VERSION_REQ:
+        (void)action_send_ack(event);
+        (void)action_send_version();
+        return ctx->state;
+
     // 202
     case EVENT_CMD_DUTY:
         result = action_finish_erase(ctx, event);
@@ -336,6 +346,11 @@ static SystemState handle_test_event(SystemContext* ctx, const SystemEvent* even
         (void)action_send_status(ctx);
         return ctx->state;
 
+    case EVENT_CMD_VERSION_REQ:
+        (void)action_send_ack(event);
+        (void)action_send_version();
+        return ctx->state;
+
     // 302
     case EVENT_CMD_DUTY:
         result = action_finish_test(ctx, event);
@@ -404,13 +419,18 @@ static SystemState handle_observe_event(SystemContext* ctx, const SystemEvent* e
     // 403
     case EVENT_CMD_TELEM_REQ:
         (void)action_send_ack(event);
-        (void)action_send_telem();
+        (void)action_send_telem(ctx);
         return ctx->state;
 
     // 404
     case EVENT_CMD_STATUS_REQ:
         (void)action_send_ack(event);
         (void)action_send_status(ctx);
+        return ctx->state;
+
+    case EVENT_CMD_VERSION_REQ:
+        (void)action_send_ack(event);
+        (void)action_send_version();
         return ctx->state;
 
     // 405
@@ -504,6 +524,11 @@ static SystemState handle_dump_event(SystemContext* ctx, const SystemEvent* even
         (void)action_send_status(ctx);
         return ctx->state;
 
+    case EVENT_CMD_VERSION_REQ:
+        (void)action_send_ack(event);
+        (void)action_send_version();
+        return ctx->state;
+
     // 502
     case EVENT_CMD_DUTY:
         result = action_finish_dump(ctx, event);
@@ -566,17 +591,22 @@ static SystemState handle_alarm_event(SystemContext* ctx, const SystemEvent* eve
         (void)action_send_status(ctx);
         return ctx->state;
 
+    case EVENT_CMD_VERSION_REQ:
+        (void)action_send_ack(event);
+        (void)action_send_version();
+        return ctx->state;
+
     // 601
     case EVENT_CMD_TELEM_REQ:
         (void)action_send_ack(event);
-        (void)action_send_telem();
+        (void)action_send_telem(ctx);
         return ctx->state;
 
     // 602 / 603
     case EVENT_CMD_SET_CFG:
-        result = action_apply_config(ctx, event);
+        result = action_write_mram(ctx, event);
         if (result == ACTION_OK) {
-            result = action_write_mram(ctx, event);
+            result = action_apply_config(ctx, event);
         }
         if (result == ACTION_OK) {
             result = action_recalc_masked_alarm(ctx);
@@ -656,6 +686,11 @@ static SystemState handle_shutdown_event(SystemContext* ctx, const SystemEvent* 
     case EVENT_CMD_STATUS_REQ:
         (void)action_send_ack(event);
         (void)action_send_status(ctx);
+        return ctx->state;
+
+    case EVENT_CMD_VERSION_REQ:
+        (void)action_send_ack(event);
+        (void)action_send_version();
         return ctx->state;
 
     // 701

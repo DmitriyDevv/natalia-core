@@ -5,43 +5,50 @@
 #include <string.h>
 
 #include "event_queue.h"
+#include "mram_store.h"
 #include "tlm_staging.h"
+#include "unican_version.h"
 
 #ifdef NATALIA_ENABLE_DETECTOR_PROTO_LOG
 #include "detector_log.h"
 #endif
 
-#define TRANSPORT_KU_TELEM_REQ_MSG_ID              (0x0000U)
-#define TRANSPORT_KU_STATUS_REQ_MSG_ID             (0x0001U)
-#define TRANSPORT_KU_SET_TIME_MSG_ID               (0x0002U)
-#define TRANSPORT_KU_OBSERVE_START_MSG_ID          (0x0003U)
-#define TRANSPORT_KU_OBSERVE_CTRL_MSG_ID           (0x0004U)
-#define TRANSPORT_KU_DUTY_MSG_ID                   (0x0005U)
-#define TRANSPORT_KU_DUMP_MSG_ID                   (0x0006U)
-#define TRANSPORT_KU_SET_CFG_MSG_ID                (0x0007U)
-#define TRANSPORT_KU_ERASE_MSG_ID                  (0x0008U)
-#define TRANSPORT_KU_TEST_MSG_ID                   (0x0009U)
-#define TRANSPORT_KU_TEST_RESULT_MSG_ID            (0x000AU)
-#define TRANSPORT_KU_SHUTDOWN_MSG_ID               (0x000BU)
-#define TRANSPORT_KU_RESET_ALARM_MSG_ID            (0x000CU)
+#define TRANSPORT_KU_TELEM_REQ_MSG_ID              (0x0F00U)
+#define TRANSPORT_KU_STATUS_REQ_MSG_ID             (0x0F01U)
+#define TRANSPORT_KU_SET_TIME_MSG_ID               (0x0F02U)
+#define TRANSPORT_KU_OBSERVE_START_MSG_ID          (0x0F03U)
+#define TRANSPORT_KU_OBSERVE_CTRL_MSG_ID           (0x0F04U)
+#define TRANSPORT_KU_DUTY_MSG_ID                   (0x0F05U)
+#define TRANSPORT_KU_DUMP_MSG_ID                   (0x0F06U)
+#define TRANSPORT_KU_SET_CFG_MSG_ID                (0x0F07U)
+#define TRANSPORT_KU_ERASE_MSG_ID                  (0x0F08U)
+#define TRANSPORT_KU_TEST_MSG_ID                   (0x0F09U)
+#define TRANSPORT_KU_TEST_RESULT_MSG_ID            (0x0F0AU)
+#define TRANSPORT_KU_SHUTDOWN_MSG_ID               (0x0F0BU)
+#define TRANSPORT_KU_RESET_ALARM_MSG_ID            (0x0F0CU)
 #define TRANSPORT_KU_SPUTNIKS_SET_TIME_MSG_ID      (0x0401U)
 #define TRANSPORT_KU_SET_DESTINATION_ID_MSG_ID     (0x0A61U)
 #define TRANSPORT_KU_SET_DEVICE_ID_MSG_ID          (0x0A62U)
+#define TRANSPORT_KU_VERSION_REQ_MSG_ID            (0xFFE0U)
 
 #define TRANSPORT_KT_SP_TIME_ORBIT_ATTITUDE_MSG_ID (0xF210U)
 #define TRANSPORT_KT_SP_MAGFIELD_ATTITUDE_MSG_ID   (0xF221U)
-#define TRANSPORT_KT_SP_MCLWAIN_MSG_ID             (0x0100U)
+#define TRANSPORT_KT_SP_MCLWAIN_MSG_ID             (0x0E00U)
 
 #define TRANSPORT_KT_SP_TIME_ORBIT_ATTITUDE_SIZE   (125U)
 #define TRANSPORT_KT_SP_MAGFIELD_ATTITUDE_SIZE     (76U)
 #define TRANSPORT_KT_SP_MCLWAIN_SIZE               (24U)
 
-#define TRANSPORT_TS_STATUS_MSG_ID                 (0x0200U)
-#define TRANSPORT_TS_ACK_MSG_ID                    (0x0201U)
-#define TRANSPORT_TS_TEST_RESULT_MSG_ID            (0x0203U)
+#define TRANSPORT_TS_STATUS_MSG_ID                 (0x0D00U)
+#define TRANSPORT_TS_ACK_MSG_ID                    (0x0D01U)
+#define TRANSPORT_TS_TELEMETRY_MSG_ID              (0x0D02U)
+#define TRANSPORT_TS_TEST_RESULT_MSG_ID            (0x0D03U)
+#define TRANSPORT_TS_VERSION_MSG_ID                (0xFFE1U)
+
+#define TRANSPORT_TELEMETRY_SIZE                   (109U)
 
 #define TRANSPORT_SHORT_PAYLOAD_SIZE               (6U)
-#define TRANSPORT_SET_CFG_PAYLOAD_SIZE             (66U)
+#define TRANSPORT_SET_CFG_PAYLOAD_SIZE             (68U)
 #define TRANSPORT_FILL_BYTE                        (0xAAU)
 #define TRANSPORT_TX_QUEUE_LENGTH                  (4U)
 #define TRANSPORT_TX_MAX_RETRIES                   (3U)
@@ -91,6 +98,17 @@ void transport_reset(void) {
     transport_local_address = BOARD_COMM_ADDR_NA;
     transport_can_control = 0U;
     transport_last_sender = BOARD_COMM_ADDR_BVS;
+}
+
+void transport_apply_stored_addresses(uint16_t device_id,
+                                      uint16_t destination_id) {
+    if (device_id != 0U) {
+        transport_local_address = device_id;
+    }
+
+    if (destination_id != 0U) {
+        transport_remote_address = destination_id;
+    }
 }
 
 static uint16_t transport_next_tx_index(uint16_t index) {
@@ -289,6 +307,51 @@ static uint32_t transport_read_le_u32(const uint8_t* data) {
         ((uint32_t)data[3] << 24U);
 }
 
+static void transport_write_le_u16(uint8_t* data, uint16_t value) {
+    data[0] = (uint8_t)(value & 0xFFU);
+    data[1] = (uint8_t)((value >> 8U) & 0xFFU);
+}
+
+static void transport_write_le_u24(uint8_t* data, uint32_t value) {
+    data[0] = (uint8_t)(value & 0xFFU);
+    data[1] = (uint8_t)((value >> 8U) & 0xFFU);
+    data[2] = (uint8_t)((value >> 16U) & 0xFFU);
+}
+
+static void transport_write_le_u32(uint8_t* data, uint32_t value) {
+    data[0] = (uint8_t)(value & 0xFFU);
+    data[1] = (uint8_t)((value >> 8U) & 0xFFU);
+    data[2] = (uint8_t)((value >> 16U) & 0xFFU);
+    data[3] = (uint8_t)((value >> 24U) & 0xFFU);
+}
+
+/* Wire-unit conversions for telemetry. Same assumptions as the alarm monitor
+ * (temp deci-degC, current mA, voltage mV) and MUST be confirmed against
+ * ТТ_ПУ_Г-СПЕК / Формат (see docs/ALARM_SUBSYSTEM_SCOPE.md §5 D5). */
+static uint16_t transport_temp_milli_to_deci(int32_t milli_c) {
+    int32_t deci = milli_c / 100;
+    if (deci > 32767) {
+        deci = 32767;
+    } else if (deci < -32768) {
+        deci = -32768;
+    }
+    return (uint16_t)(int16_t)deci;
+}
+
+static uint16_t transport_current_ua_to_ma(int32_t current_ua) {
+    int32_t milli_amp = current_ua / 1000;
+    if (milli_amp < 0) {
+        milli_amp = 0;
+    } else if (milli_amp > 65535) {
+        milli_amp = 65535;
+    }
+    return (uint16_t)milli_amp;
+}
+
+static uint16_t transport_clamp_u16(uint32_t value) {
+    return (value > 0xFFFFU) ? 0xFFFFU : (uint16_t)value;
+}
+
 static bool transport_is_valid_bank(uint8_t bank_id) {
     return (bank_id == 1U) || (bank_id == 2U);
 }
@@ -331,6 +394,7 @@ static bool transport_is_known_command_id(uint16_t message_id) {
     case TRANSPORT_KU_SPUTNIKS_SET_TIME_MSG_ID:
     case TRANSPORT_KU_SET_DESTINATION_ID_MSG_ID:
     case TRANSPORT_KU_SET_DEVICE_ID_MSG_ID:
+    case TRANSPORT_KU_VERSION_REQ_MSG_ID:
         return true;
 
     default:
@@ -493,8 +557,120 @@ BoardStatus transport_send_status(const SystemContext* ctx) {
                                            payload);
 }
 
-BoardStatus transport_send_telemetry(void) {
-    return BOARD_ERR_UNSUPPORTED;
+BoardStatus transport_send_telemetry(const SystemContext* ctx) {
+    uint8_t buffer[TRANSPORT_TELEMETRY_SIZE];
+    InstrumentTime rtc = {0};
+    BoardDigitalTempSample pu_temp = {0};
+    BoardDigitalTempSample ped_temp = {0};
+    BoardTempSample bd_temp = {0};
+    BoardPowerSample pu_power = {0};
+    BoardPowerSample ped_power = {0};
+    uint32_t board_status_word = 0U;
+    MramStoreConfig cfg = {0};
+    MramStoreServiceData svc = {0};
+
+    if (ctx == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    memset(buffer, 0, sizeof(buffer));
+
+    (void)board_rtc_get_time(&rtc);
+    transport_write_le_u16(&buffer[0], rtc.milliseconds);
+    transport_write_le_u32(&buffer[2], rtc.seconds);
+
+    /* Bytes 6-7 (MC temp) stay 0: the STM32 internal temperature is not exposed
+     * by Board_API (see the analog-temp gap in docs/ALARM_SUBSYSTEM_SCOPE.md). */
+    if (board_read_digital_temp(BOARD_TEMP_SENSOR_PU, &pu_temp) == BOARD_OK) {
+        transport_write_le_u16(&buffer[8],
+            transport_temp_milli_to_deci(pu_temp.temperature_milli_c));
+    }
+    if (board_read_digital_temp(BOARD_TEMP_SENSOR_PED, &ped_temp) == BOARD_OK) {
+        transport_write_le_u16(&buffer[10],
+            transport_temp_milli_to_deci(ped_temp.temperature_milli_c));
+    }
+    if (board_read_temp(&bd_temp) == BOARD_OK) {
+        transport_write_le_u16(&buffer[12],
+            transport_temp_milli_to_deci(bd_temp.temperature_milli_c));
+    }
+
+    if (board_read_power_monitor(BOARD_POWER_MONITOR_PU, &pu_power) == BOARD_OK) {
+        transport_write_le_u16(&buffer[14], transport_clamp_u16(pu_power.bus_voltage_mv));
+        transport_write_le_u16(&buffer[16], transport_current_ua_to_ma(pu_power.current_ua));
+    }
+    if (board_read_power_monitor(BOARD_POWER_MONITOR_PED, &ped_power) == BOARD_OK) {
+        transport_write_le_u16(&buffer[18], transport_clamp_u16(ped_power.bus_voltage_mv));
+        transport_write_le_u16(&buffer[20], transport_current_ua_to_ma(ped_power.current_ua));
+    }
+
+    transport_write_le_u16(&buffer[22], (uint16_t)(ctx->alarm_status & 0xFFFFU));
+    transport_write_le_u16(&buffer[24], (uint16_t)(ctx->masked_alarm & 0xFFFFU));
+    buffer[26] = transport_build_mode_byte(ctx);
+    buffer[27] = transport_build_nand_full_byte(ctx);
+
+    (void)board_read_power_status(&board_status_word);
+    transport_write_le_u16(&buffer[28], (uint16_t)(board_status_word & 0xFFFFU));
+
+    /* Bytes 30-35 (PED status, trigger config, observe settings) are 0 in modes
+     * other than OBSERVE (CAN §4.3 note 1); OBSERVE is not implemented (Phase 5). */
+
+    (void)mram_store_load_config(&cfg);
+    (void)mram_store_load_service_data(&svc);
+
+    transport_write_le_u16(&buffer[36], (uint16_t)cfg.mcu_pu_temp_min);
+    transport_write_le_u16(&buffer[38], (uint16_t)cfg.mcu_pu_temp_max);
+    transport_write_le_u16(&buffer[40], (uint16_t)cfg.pu_temp_min);
+    transport_write_le_u16(&buffer[42], (uint16_t)cfg.pu_temp_max);
+    transport_write_le_u16(&buffer[44], (uint16_t)cfg.ped_temp_min);
+    transport_write_le_u16(&buffer[46], (uint16_t)cfg.ped_temp_max);
+    transport_write_le_u16(&buffer[48], (uint16_t)cfg.det_temp_min);
+    transport_write_le_u16(&buffer[50], (uint16_t)cfg.det_temp_max);
+    transport_write_le_u16(&buffer[52], cfg.pu_voltage_min);
+    transport_write_le_u16(&buffer[54], cfg.pu_voltage_max);
+    transport_write_le_u16(&buffer[56], cfg.pu_current_min);
+    transport_write_le_u16(&buffer[58], cfg.pu_current_max);
+    transport_write_le_u16(&buffer[60], cfg.ped_voltage_min);
+    transport_write_le_u16(&buffer[62], cfg.ped_voltage_max);
+    transport_write_le_u16(&buffer[64], cfg.ped_current_min);
+    transport_write_le_u16(&buffer[66], cfg.ped_current_max);
+    transport_write_le_u16(&buffer[68], (uint16_t)cfg.belt_lmin);
+    transport_write_le_u16(&buffer[70], (uint16_t)cfg.belt_lmax);
+    transport_write_le_u16(&buffer[72], (uint16_t)cfg.belt_bmin);
+    transport_write_le_u16(&buffer[74], cfg.ac1_rate_max);
+    transport_write_le_u16(&buffer[76], cfg.init_rtc_time_ms);
+    transport_write_le_u32(&buffer[78], cfg.init_rtc_time);
+    transport_write_le_u16(&buffer[82], svc.observe_session_id);
+    transport_write_le_u24(&buffer[84], svc.nand1_packet_count);
+    transport_write_le_u24(&buffer[87], svc.nand2_packet_count);
+    transport_write_le_u16(&buffer[90], svc.nand1_erase_count);
+    transport_write_le_u16(&buffer[92], svc.nand2_erase_count);
+    transport_write_le_u16(&buffer[94], svc.nand1_test_count);
+    transport_write_le_u16(&buffer[96], svc.nand2_test_count);
+    transport_write_le_u16(&buffer[98], cfg.alarm_mask);
+    transport_write_le_u16(&buffer[100], cfg.can_control);
+    transport_write_le_u16(&buffer[102], cfg.destination_id);
+    transport_write_le_u16(&buffer[104], cfg.device_id);
+
+    buffer[106] = NATALIA_SW_VERSION_MAJOR;
+    buffer[107] = NATALIA_SW_VERSION_MINOR;
+    buffer[108] = NATALIA_SW_VERSION_EXTRA;
+
+    return transport_enqueue_long_message(TRANSPORT_TS_TELEMETRY_MSG_ID,
+                                          buffer, TRANSPORT_TELEMETRY_SIZE);
+}
+
+BoardStatus transport_send_version(void) {
+    uint8_t payload[TRANSPORT_SHORT_PAYLOAD_SIZE];
+
+    payload[0] = NATALIA_SW_VERSION_MAJOR;
+    payload[1] = NATALIA_SW_VERSION_MINOR;
+    payload[2] = NATALIA_SW_VERSION_EXTRA;
+    payload[3] = TRANSPORT_FILL_BYTE;
+    payload[4] = TRANSPORT_FILL_BYTE;
+    payload[5] = TRANSPORT_FILL_BYTE;
+
+    return transport_enqueue_short_message(TRANSPORT_TS_VERSION_MSG_ID,
+                                           payload);
 }
 
 BoardStatus transport_send_test_result(const uint8_t* data, uint16_t length) {
@@ -523,10 +699,6 @@ static bool transport_payload_is_fill_range(const BoardCommMessage* message,
     return true;
 }
 
-static bool transport_payload_is_fill(const BoardCommMessage* message) {
-    return transport_payload_is_fill_range(message, 0U, TRANSPORT_SHORT_PAYLOAD_SIZE);
-}
-
 static bool transport_is_short_message(const BoardCommMessage* message) {
     return (message != NULL) &&
         (message->data != NULL) &&
@@ -537,10 +709,6 @@ static BoardStatus transport_build_fill_command_event(const BoardCommMessage* me
                                                       SystemEvent* event,
                                                       EventType type) {
     if ((message == NULL) || (event == NULL)) {
-        return BOARD_ERR_INVALID_ARG;
-    }
-
-    if (!transport_payload_is_fill(message)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -620,7 +788,15 @@ static bool transport_validate_observe_params(uint16_t params) {
         return false;
     }
 
+    if ((event_mode == 0U) != (event_count == 0U)) {
+        return false;
+    }
+
     if ((spectrum_mode == 0U) && (hist_mode != 0U)) {
+        return false;
+    }
+
+    if ((spectrum_mode == 1U) && (hist_mode == 0U)) {
         return false;
     }
 
@@ -857,7 +1033,7 @@ static BoardStatus transport_build_set_cfg_event(const BoardCommMessage* message
     data = message->data;
 
     write_control = transport_read_le_u16(&data[0]);
-    can_control = transport_read_le_u16(&data[64]);
+    can_control = transport_read_le_u16(&data[66]);
 
     if ((write_control & 0xFF80U) != 0U) {
         return BOARD_ERR_INVALID_ARG;
@@ -894,15 +1070,16 @@ static BoardStatus transport_build_set_cfg_event(const BoardCommMessage* message
     cfg->belt_lmax = (int16_t)transport_read_le_u16(&data[36]);
     cfg->belt_bmin = (int16_t)transport_read_le_u16(&data[38]);
     cfg->ac1_rate_max = transport_read_le_u16(&data[40]);
-    cfg->init_rtc_time = transport_read_le_u32(&data[42]);
-    cfg->observe_session_id = transport_read_le_u16(&data[46]);
-    cfg->nand1_packet_count = transport_read_le_u24(&data[48]);
-    cfg->nand2_packet_count = transport_read_le_u24(&data[51]);
-    cfg->nand1_erase_count = transport_read_le_u16(&data[54]);
-    cfg->nand2_erase_count = transport_read_le_u16(&data[56]);
-    cfg->nand1_test_count = transport_read_le_u16(&data[58]);
-    cfg->nand2_test_count = transport_read_le_u16(&data[60]);
-    cfg->alarm_mask = transport_read_le_u16(&data[62]);
+    cfg->init_rtc_time_ms = transport_read_le_u16(&data[42]);
+    cfg->init_rtc_time = transport_read_le_u32(&data[44]);
+    cfg->observe_session_id = transport_read_le_u16(&data[48]);
+    cfg->nand1_packet_count = transport_read_le_u24(&data[50]);
+    cfg->nand2_packet_count = transport_read_le_u24(&data[53]);
+    cfg->nand1_erase_count = transport_read_le_u16(&data[56]);
+    cfg->nand2_erase_count = transport_read_le_u16(&data[58]);
+    cfg->nand1_test_count = transport_read_le_u16(&data[60]);
+    cfg->nand2_test_count = transport_read_le_u16(&data[62]);
+    cfg->alarm_mask = transport_read_le_u16(&data[64]);
     cfg->can_control = can_control;
 
     return BOARD_OK;
@@ -1073,6 +1250,11 @@ static BoardStatus transport_build_command_event(const BoardCommMessage* message
                                                   event,
                                                   EVENT_CMD_RESET_ALARM);
 
+    case TRANSPORT_KU_VERSION_REQ_MSG_ID:
+        return transport_build_fill_command_event(message,
+                                                  event,
+                                                  EVENT_CMD_VERSION_REQ);
+
     case TRANSPORT_KU_SPUTNIKS_SET_TIME_MSG_ID:
         return transport_build_sputniks_set_time_event(message, event);
 
@@ -1087,20 +1269,24 @@ static BoardStatus transport_handle_address_command(const BoardCommMessage* mess
     }
 
     if (message->message_id == TRANSPORT_KU_SET_DESTINATION_ID_MSG_ID) {
-        if (message->data[0] == 0U) {
+        uint16_t destination_id = transport_read_le_u16(&message->data[0]);
+
+        if (destination_id == 0U) {
             return BOARD_ERR_INVALID_ARG;
         }
 
-        transport_remote_address = message->data[0];
+        transport_remote_address = destination_id;
         return BOARD_OK;
     }
 
     if (message->message_id == TRANSPORT_KU_SET_DEVICE_ID_MSG_ID) {
-        if (message->data[0] == 0U) {
+        uint16_t device_id = transport_read_le_u16(&message->data[0]);
+
+        if (device_id == 0U) {
             return BOARD_ERR_INVALID_ARG;
         }
 
-        transport_local_address = message->data[0];
+        transport_local_address = device_id;
         return BOARD_OK;
     }
 
@@ -1121,12 +1307,20 @@ static void transport_handle_known_command(SystemContext* ctx,
         (message->message_id == TRANSPORT_KU_SET_DEVICE_ID_MSG_ID)) {
         status = transport_handle_address_command(message);
 
-        if (status == BOARD_OK) {
-            (void)transport_send_ack(message->message_id, TRANSPORT_ACK_OK);
-        } else {
+        if (status != BOARD_OK) {
             (void)transport_send_ack(message->message_id, TRANSPORT_ACK_ERR_CONTENT);
+            return;
         }
 
+        if (ctx->state != STATE_SHUTDOWN) {
+            if (mram_store_save_addresses(transport_local_address,
+                                          transport_remote_address) != BOARD_OK) {
+                (void)transport_send_ack(message->message_id, TRANSPORT_ACK_ERR_OTHER);
+                return;
+            }
+        }
+
+        (void)transport_send_ack(message->message_id, TRANSPORT_ACK_OK);
         return;
     }
 

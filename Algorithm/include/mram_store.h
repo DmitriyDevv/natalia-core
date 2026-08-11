@@ -39,6 +39,9 @@ typedef struct {
     uint16_t can_control;
     uint16_t alarm_mask;
     uint16_t config_version;
+    uint16_t init_rtc_time_ms;
+    uint16_t destination_id;
+    uint16_t device_id;
 } MramStoreConfig;
 
 /*
@@ -79,6 +82,8 @@ BoardStatus mram_store_restore_redundant_copy(void);
 BoardStatus mram_store_load_config(MramStoreConfig *config);
 
 BoardStatus mram_store_save_config(const MramStoreConfig *config);
+
+BoardStatus mram_store_save_addresses(uint16_t device_id, uint16_t destination_id);
 
 BoardStatus mram_store_load_service_data(MramStoreServiceData *service_data);
 

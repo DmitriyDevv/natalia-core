@@ -6,13 +6,14 @@
 #include "actions.h"
 #include "alarm.h"
 #include "board_comm_stub.h"
+#include "board_stub.h"
 #include "event_queue.h"
 #include "mram_store.h"
 #include "state.h"
 #include "transport.h"
 
-#define KU_SET_CFG_MSG_ID (0x0007U)
-#define SET_CFG_SIZE      (66U)
+#define KU_SET_CFG_MSG_ID (0x0F07U)
+#define SET_CFG_SIZE      (68U)
 #define ADDR_NA           (0x1EU)
 #define ADDR_BVS          (0x05U)
 
@@ -38,7 +39,7 @@ static void put16i(uint8_t* p, int16_t v) {
     put16(p, (uint16_t)v);
 }
 
-/* Builds a fully-populated, reserved-bit-clean 66-byte CMD_SET_CFG payload with
+/* Builds a fully-populated, reserved-bit-clean 68-byte CMD_SET_CFG payload with
  * a distinct recognizable value in every field so offsets/endianness/sign can be
  * checked. write_control selects session-id (bit0) and NAND2 erase (bit4). */
 static void build_reference_payload(uint8_t* p) {
@@ -65,16 +66,17 @@ static void build_reference_payload(uint8_t* p) {
     put16i(&p[36], 12);
     put16i(&p[38], -3);
     put16(&p[40], 1234U);
-    put32(&p[42], 0x11223344UL);
-    put16(&p[46], 0xABCDU);
-    put24(&p[48], 0x123456UL);
-    put24(&p[51], 0x0ABCDEUL);
-    put16(&p[54], 0x1111U);
-    put16(&p[56], 0x2222U);
-    put16(&p[58], 0x3333U);
-    put16(&p[60], 0x4444U);
-    put16(&p[62], 0x00FFU);
-    put16(&p[64], 0x0003U);    /* can_control: bit0 + bit1 */
+    put16(&p[42], 0x02EEU);    /* init_rtc_time_ms */
+    put32(&p[44], 0x11223344UL);
+    put16(&p[48], 0xABCDU);
+    put24(&p[50], 0x123456UL);
+    put24(&p[53], 0x0ABCDEUL);
+    put16(&p[56], 0x1111U);
+    put16(&p[58], 0x2222U);
+    put16(&p[60], 0x3333U);
+    put16(&p[62], 0x4444U);
+    put16(&p[64], 0x00FFU);
+    put16(&p[66], 0x0003U);    /* can_control: bit0 + bit1 */
 }
 
 static void assert_reference_fields(const CmdSetConfig* c) {
@@ -99,6 +101,7 @@ static void assert_reference_fields(const CmdSetConfig* c) {
     assert(c->belt_lmax == 12);
     assert(c->belt_bmin == -3);
     assert(c->ac1_rate_max == 1234U);
+    assert(c->init_rtc_time_ms == 0x02EEU);
     assert(c->init_rtc_time == 0x11223344UL);
     assert(c->observe_session_id == 0xABCDU);
     assert(c->nand1_packet_count == 0x123456UL);
@@ -158,7 +161,7 @@ static void reserved_can_control_bit_is_rejected(void) {
     system_event_queue_init();
     board_comm_stub_reset();
     build_reference_payload(payload);
-    put16(&payload[64], 0x0004U); /* reserved bit 2 set */
+    put16(&payload[66], 0x0004U); /* reserved bit 2 set */
 
     board_comm_stub_inject_rx(KU_SET_CFG_MSG_ID, ADDR_BVS, ADDR_NA,
                               payload, SET_CFG_SIZE);
@@ -243,6 +246,7 @@ static void apply_and_write_persists_config_and_gated_counters(void) {
     assert(config_loaded.belt_lmin == -5);
     assert(config_loaded.ac1_rate_max == 1234U);
     assert(config_loaded.init_rtc_time == 0x11223344UL);
+    assert(config_loaded.init_rtc_time_ms == 0x02EEU);
     assert(config_loaded.can_control == 0x0003U);
     assert(config_loaded.alarm_mask == alarm_sanitize_mask(0x00FFU));
     assert(config_loaded.config_version == 7U);
@@ -260,12 +264,37 @@ static void apply_and_write_persists_config_and_gated_counters(void) {
     assert(service_loaded.nand2_test_count == 0xF000U);
 }
 
+/* §15.4 / mode_alarm.md §13.5: the new config must go live in RAM only after
+ * both MRAM copies are written. On a write failure the command is rejected and
+ * ctx keeps its previous alarm_mask / can_control / observe_session_id. */
+static void config_not_applied_when_mram_write_fails(void) {
+    SystemContext ctx;
+    SystemEvent event;
+
+    make_reference_event(&event);
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.state = STATE_DUTY;
+    ctx.can_control = 0x1234U;
+    ctx.alarm_mask = 0x00F0U;
+    ctx.observe_session_id = 0x9999U;
+
+    board_stub_set_mram_write_fail(true);
+    assert(handle_event(&ctx, &event) == STATE_DUTY);
+    board_stub_set_mram_write_fail(false);
+
+    assert(ctx.can_control == 0x1234U);
+    assert(ctx.alarm_mask == 0x00F0U);
+    assert(ctx.observe_session_id == 0x9999U);
+}
+
 int main(void) {
     payload_is_parsed_field_for_field();
     reserved_write_control_bit_is_rejected();
     reserved_can_control_bit_is_rejected();
     wrong_length_is_rejected();
     apply_and_write_persists_config_and_gated_counters();
+    config_not_applied_when_mram_write_fails();
 
     return 0;
 }
