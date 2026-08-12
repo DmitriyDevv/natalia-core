@@ -9,9 +9,7 @@
 #define ALARM_MONITOR_PERIOD_MS (20000U)
 
 /*
- * Wire-unit -> Board_API native-unit conversion factors. The CAN protocol does
- * not state the threshold scale; these are working assumptions and MUST be
- * confirmed against ТТ_ПУ_Г-СПЕК / Формат_научной_информации:
+ * Wire-unit -> Board_API native-unit conversion factors.
  *   temperature threshold assumed deci-degC, Board_API is milli-degC;
  *   current threshold assumed mA, Board_API is uA;
  *   voltage threshold assumed mV, matching Board_API (no conversion).

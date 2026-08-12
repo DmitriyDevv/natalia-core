@@ -732,13 +732,18 @@ board_comm_send(&message);                             // поставить Т�
 board_comm_get_status(&status);                        // при необходимости — состояние канала
 ```
 
-### Сбор аппаратных событий (предусмотрено для OBSERVE; ещё не подключено)
+### Сбор аппаратных событий (главный цикл)
 
 ```c
 board_rtc_take_1hz_events(&count);                     // забрать секундные тики (1 Гц)
 board_ped_take_trigger_events(&count);                 // забрать триггеры ПЭД
 // счётчик обнуляется; алгоритм ставит соответствующие события в очередь
 ```
+
+Это единственный разрешённый мост между прерываниями и алгоритмом. Обработчик
+прерывания только увеличивает счётчик; событие в очередь ставит главный цикл
+(`algorithm_collect_hw_events`). Тики 1 Гц забираются во всех режимах, триггеры
+ПЭД — только в режиме наблюдений.
 
 ---
 
@@ -759,17 +764,18 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 | Параметр | Значение в заглушке | На плате |
 | --- | ---: | ---: |
 | Банков NAND | 2 | 2 |
-| Ёмкость банка, пакетов | **64** | 262144 |
+| Ёмкость банка, пакетов | **256** | 262144 |
 | Размер пакета, байт | 2048 | 2048 |
 | Копий MRAM | 2 | 2 |
 | Размер копии, байт | 1024 | 1024 (`BOARD_MRAM_COPY_SIZE`) |
 
 Область конфигурации совпадает с полётной, различаются только NAND: ёмкость
-банка в заглушке меньше почти в 4000 раз.
+банка в заглушке меньше в 1024 раза.
 
-Ёмкость банка задана `BOARD_STUB_NAND_PACKET_COUNT`. Разница с полётной почти
-в 4000 раз — режим TEST, который работает блоками по 128 пакетов, на хосте
-выполняет ноль блоков.
+Ёмкость задана `BOARD_STUB_NAND_PACKET_COUNT` и выбрана так, чтобы режим TEST,
+работающий блоками по 128 пакетов, проходил на хосте **два полных блока**: при
+меньшем значении тракт записи, чтения и сравнения не выполнялся бы ни разу.
+Модель занимает около 1 МБ статической памяти на два банка.
 
 Инициализация выполняется один раз за процесс (`board_stub_init_once`): NAND
 заполняется `0xFF`, MRAM — нулями. **Функции полного сброса нет**, поэтому
@@ -794,20 +800,23 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 | `board_mram_write_test_result` / `board_mram_read_test_result` | Настоящие, отдельная область на банк и копию. |
 
 Отказ записи включается тестом: `board_stub_set_mram_write_fail(true)` заставляет
-`board_mram_write` возвращать `BOARD_ERR_IO` (объявление — `Algorithm/include/board_stub.h`).
+`board_mram_write` возвращать `BOARD_ERR_IO`. Признак валидности образа
+результатов теста задаётся `board_stub_set_test_result_valid(bank, false)` — так
+проверяется путь «банк ни разу не тестировался». Оба объявления — в
+`Algorithm/include/board_stub.h`.
 
 ### NAND
 
 | Функция | Поведение |
 | --- | --- |
 | `board_nand_power_on` / `_off`, `_connect` / `_disconnect` | Меняют флаги модели, `BOARD_OK`. |
-| `board_nand_is_powered` | **Всегда `1`.** Отказ подтверждения питания не моделируется. |
+| `board_nand_is_powered` | Настоящий флаг модели: `1` после `board_nand_power_on`, `0` после `_off`. Изначально `0`. |
 | `board_nand_read` / `board_nand_write` | Настоящие, с проверкой границ банка. |
 | `board_nand_open_write` | Задаёт стартовый счётчик пакетов; выставляет признак заполнения, если счётчик достиг ёмкости. |
 | `board_nand_write_packet` | Настоящая запись 2048 байт, инкремент счётчика. При заполненном банке — `BOARD_ERR_IO` и признак заполнения. |
 | `board_nand_write_poll` / `board_nand_write_flush` | **Всегда `is_idle` / `is_done` = 1** — запись мгновенная. |
 | `board_nand_open_read` / `board_nand_read_packet` / `board_nand_read_next_packet` | Настоящие, потоковое чтение с внутренним индексом. |
-| `board_nand_get_capacity_packets` | Всегда `64`. |
+| `board_nand_get_capacity_packets` | Всегда `256`. |
 | `board_nand_get_committed_packet_count` | Настоящий счётчик. |
 | `board_nand_erase_start` | Настоящее стирание: `0xFF`, сброс счётчиков и признака заполнения. |
 | `board_nand_erase_is_done` | **Всегда `is_done = 1`** — стирание мгновенное, таймауты не проверить. |
@@ -820,33 +829,61 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 | Функция | Значение |
 | --- | --- |
 | `board_ped_power_on` / `_off`, `board_ped_reg_init`, `board_ped_set_inhibit`, `board_ped_set_sleep`, `board_ped_reset_trigger`, `board_ped_write_config` | Ничего не делают. |
-| `board_ped_is_powered` | `1` |
+| `board_ped_is_powered` | Задаётся `board_stub_set_ped_powered()`; по умолчанию `1`. |
 | `board_ped_read_status` | `0` |
 | `board_ped_read_event` | `bytes_read = 0` |
-| `board_ped_take_trigger_events` | **`0`** — триггеры не моделируются |
+| `board_ped_take_trigger_events` | Отдаёт заданное `board_stub_set_ped_trigger_events()` и обнуляет счётчик; по умолчанию `0`. |
 
 ### RTC
 
 | Функция | Поведение |
 | --- | --- |
-| `board_rtc_get_time` | **Всегда `0 с, 0 мс`** — время не идёт. |
+| `board_rtc_get_time` | Отдаёт заданное `board_stub_set_rtc_time()`; по умолчанию `0 с, 0 мс`. |
 | `board_rtc_set_time` | `BOARD_OK`; отвергает `milliseconds >= 1000`. Значение не запоминается. |
-| `board_rtc_take_1hz_events` | **`0`** — секундные события не моделируются. |
+| `board_rtc_take_1hz_events` | Отдаёт заданное `board_stub_set_rtc_1hz_events()` и обнуляет счётчик; по умолчанию `0`. |
 
-Всё, что зависит от хода времени, на хосте не проверяется.
+Часы не идут сами: заглушка отдаёт ровно то, что записал тест. Сценарии, где
+время должно течь между вызовами, нужно выстраивать вручную.
 
 ### Датчики
 
 | Функция | Значение |
 | --- | --- |
-| `board_read_temp` / `board_read_temp_milli_c` | `25000` м°C, `ready = 1`, `range_valid = 1` |
-| `board_read_digital_temp` / `board_read_digital_temp_milli_c` | `25000` м°C для обоих датчиков (`sensor` игнорируется) |
-| `board_read_power_monitor` | `bus_voltage_mv = 3300`, остальное — нули (`monitor` игнорируется) |
+| `board_read_temp` / `board_read_temp_milli_c` | **Всегда `25000` м°C**, `ready = 1`, `range_valid = 1` — аналоговый канал не инжектируется |
+| `board_read_digital_temp` / `board_read_digital_temp_milli_c` | Задаётся `board_stub_set_digital_temp()` отдельно для `PU` и `PED`; по умолчанию `25000` м°C, годные |
+| `board_read_power_monitor` | Задаётся `board_stub_set_power_monitor()` отдельно для `PU` и `PED`; по умолчанию `3300` мВ, `0` мкА, `ready = 1` |
 | `board_read_power_status` | `0` |
 | `board_temp_init` / `_start` / `_stop`, `board_temp_digital_init`, `board_power_monitor_init` | `BOARD_OK` |
 
-Выхода за пороги ни один датчик не выдаёт, поэтому мониторинг аварий проверить
-через заглушку нельзя.
+Цифровые датчики и мониторы питания инжектируются, поэтому цикл контроля
+аварий на хосте проверяется полностью — включая случай недостоверного отсчёта:
+`valid` / `ready` в `false` заставляет контроль **пропустить** параметр, а не
+поднять ложную аварию.
+
+Аналоговый канал (`board_read_temp`) остаётся константой. Из-за этого признаки
+температуры МК и блока детекторов через заглушку не проверяются — впрочем, они
+и не реализованы: Board_API не разделяет два аналоговых канала.
+
+### Точки внедрения для тестов
+
+Полный список управляющих функций заглушки (`Algorithm/include/board_stub.h`):
+
+```c
+void board_stub_set_mram_write_fail(bool fail);
+void board_stub_set_test_result_valid(uint8_t nand_bank, bool valid);
+
+void board_stub_set_rtc_1hz_events(uint32_t count);
+void board_stub_set_ped_trigger_events(uint32_t count);
+void board_stub_set_rtc_time(uint32_t seconds, uint16_t milliseconds);
+
+void board_stub_set_digital_temp(BoardTempSensorId sensor, int32_t milli_c, bool valid);
+void board_stub_set_power_monitor(BoardPowerMonitorId monitor, uint32_t mv,
+                                  int32_t ua, bool ready);
+void board_stub_set_ped_powered(bool powered);
+```
+
+Единицы совпадают с контрактом Board_API: температура — м°C, напряжение — мВ,
+ток — мкА. Это не часть Board_API и в прошивочной сборке их нет.
 
 ### Вывод данных
 
@@ -892,11 +929,16 @@ bool     board_comm_stub_last_tx(uint16_t* message_id, uint16_t* address_to,
 
 ### Сводка ограничений
 
-Через хостовую заглушку **нельзя** проверить: обработку неверной CRC в MRAM,
-таймауты и отказы NAND, отказ подтверждения питания, отказы и повторы вывода
-данных, ход времени, секундные тики RTC, триггеры ПЭД, выход параметров за
-пороги. Для этого нужна либо доработка заглушки, либо стендовая проверка
-(`tests/firmware/`).
+Через хостовую заглушку **нельзя** проверить: обработку неверной CRC в MRAM
+(`board_mram_check_crc` всегда валидна), таймауты и отказы NAND, отказы и
+повторы вывода данных, обмен ПЭД (статус, конфигурация, чтение события),
+аналоговый канал температуры, самостоятельный ход времени. Для этого нужна либо
+доработка заглушки, либо стендовая проверка (`tests/firmware/`).
+
+Проверяются, наоборот, полностью: разбор протокола и сборка всех ТС, вся матрица
+допустимости команд по режимам, длительные режимы ERASE/TEST/DUMP до конца,
+работа с MRAM включая отказ записи, цикл контроля аварий по цифровым датчикам и
+мониторам питания, сбор аппаратных событий.
 
 ---
 

@@ -11,8 +11,8 @@
 
 /*
  * Persisted configuration. Field set and 16-bit widths follow the CMD_SET_CFG
- * payload (Протокол_CAN_ГС_v2). Threshold/belt/rate units are pinned by the
- * alarm-monitoring phase; only the field widths matter for the stored layout.
+ * payload. Threshold/belt/rate units are pinned by the alarm-monitoring phase;
+ * only the field widths matter for the stored layout.
  */
 typedef struct {
     int16_t mcu_pu_temp_min;

@@ -325,9 +325,6 @@ static void transport_write_le_u32(uint8_t* data, uint32_t value) {
     data[3] = (uint8_t)((value >> 24U) & 0xFFU);
 }
 
-/* Wire-unit conversions for telemetry. Same assumptions as the alarm monitor
- * (temp deci-degC, current mA, voltage mV) and MUST be confirmed against
- * ТТ_ПУ_Г-СПЕК / Формат (see docs/ALARM_SUBSYSTEM_SCOPE.md §5 D5). */
 static uint16_t transport_temp_milli_to_deci(int32_t milli_c) {
     int32_t deci = milli_c / 100;
     if (deci > 32767) {
@@ -580,7 +577,7 @@ BoardStatus transport_send_telemetry(const SystemContext* ctx) {
     transport_write_le_u32(&buffer[2], rtc.seconds);
 
     /* Bytes 6-7 (MC temp) stay 0: the STM32 internal temperature is not exposed
-     * by Board_API (see the analog-temp gap in docs/ALARM_SUBSYSTEM_SCOPE.md). */
+     * by Board_API. */
     if (board_read_digital_temp(BOARD_TEMP_SENSOR_PU, &pu_temp) == BOARD_OK) {
         transport_write_le_u16(&buffer[8],
             transport_temp_milli_to_deci(pu_temp.temperature_milli_c));
@@ -612,7 +609,7 @@ BoardStatus transport_send_telemetry(const SystemContext* ctx) {
     transport_write_le_u16(&buffer[28], (uint16_t)(board_status_word & 0xFFFFU));
 
     /* Bytes 30-35 (PED status, trigger config, observe settings) are 0 in modes
-     * other than OBSERVE (CAN §4.3 note 1); OBSERVE is not implemented (Phase 5). */
+     * other than OBSERVE; OBSERVE is not implemented. */
 
     (void)mram_store_load_config(&cfg);
     (void)mram_store_load_service_data(&svc);

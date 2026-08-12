@@ -19,10 +19,10 @@ static void init_duty_context(SystemContext *ctx) {
     ctx->test.failed_address = TEST_MODE_FAILED_ADDRESS_NONE;
 }
 
-/* total_blocks derives from NAND capacity; the host stub reports 64 packets,
- * which is below one 128-packet block, so a clean CMD_TEST must still run to a
- * штатное completion (empty Nerr), bump the per-bank test counter, and return
- * to DUTY. Exercises the FSM wiring + counter increment end to end. */
+/* total_blocks derives from NAND capacity; the host stub reports 256 packets,
+ * which is two 128-packet blocks, so a clean CMD_TEST runs the write/read/
+ * compare path over both blocks, must finish with an empty Nerr, bump the
+ * per-bank test counter, and return to DUTY. */
 static void clean_test_completes_and_bumps_counter(void) {
     SystemContext ctx;
     SystemEvent event;
@@ -42,9 +42,9 @@ static void clean_test_completes_and_bumps_counter(void) {
     assert(system_event_queue_push_back(&event));
     algorithm_process_events(&ctx);
     assert(ctx.state == STATE_TEST);
-    assert(ctx.test.total_blocks == 0U);
+    assert(ctx.test.total_blocks == 2U);
 
-    for (guard = 0U; (guard < 1000U) && (ctx.state == STATE_TEST); ++guard) {
+    for (guard = 0U; (guard < 5000U) && (ctx.state == STATE_TEST); ++guard) {
         algorithm_poll(&ctx);
         algorithm_process_events(&ctx);
     }

@@ -7,12 +7,6 @@
 
 /*
  * Scientific-information (NI) packet writer and format serializers.
- *
- * Phase 4 provides only the interface. The bodies - NI packet framing per
- * Format_nauchnoy_informatsii_GS_v6, per-format serialization, and CRC16 via
- * the STM32L496 hardware CRC unit - are implemented in the scientific-
- * information phase. For now the bodies are no-ops so the OBSERVE orchestrator
- * can already call them at the correct points.
  */
 
 typedef enum {
