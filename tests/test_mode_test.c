@@ -6,11 +6,13 @@
 
 #include "algorithm.h"
 #include "actions.h"
+#include "board_stub.h"
 #include "event_queue.h"
 #include "mram_store.h"
 #include "state.h"
 
 static void init_duty_context(SystemContext *ctx) {
+    board_stub_reset_all();
     memset(ctx, 0, sizeof(*ctx));
     ctx->state = STATE_DUTY;
     ctx->previous_state = STATE_DUTY;

@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "board_stub.h"
 #include "mram_store.h"
 
 static void fill_test_result(MramStoreTestResult *result, uint8_t bank, uint32_t seed) {
@@ -19,6 +20,7 @@ static void test_config_roundtrip(void) {
     MramStoreConfig in;
     MramStoreConfig out;
 
+    board_stub_reset_all();
     memset(&in, 0, sizeof(in));
     in.mcu_pu_temp_min = -40;
     in.mcu_pu_temp_max = 85;
@@ -56,6 +58,7 @@ static void test_service_data_roundtrip(void) {
     MramStoreServiceData in;
     MramStoreServiceData out;
 
+    board_stub_reset_all();
     memset(&in, 0, sizeof(in));
     in.alarm_status = 0x00FFU;
     in.nand1_full = 1U;
@@ -81,6 +84,7 @@ static void test_test_result_per_bank(void) {
     MramStoreTestResult r2;
     MramStoreTestResult out;
 
+    board_stub_reset_all();
     fill_test_result(&r1, 1U, 0x1000U);
     fill_test_result(&r2, 2U, 0x2000U);
 
@@ -107,6 +111,7 @@ static void test_region_independence(void) {
     MramStoreTestResult t2_in;
     MramStoreTestResult t_out;
 
+    board_stub_reset_all();
     memset(&c_in, 0, sizeof(c_in));
     c_in.alarm_mask = 0xABCDU;
     c_in.config_version = 42U;
@@ -145,6 +150,7 @@ static void test_region_independence(void) {
 static void test_arg_validation(void) {
     MramStoreTestResult r;
 
+    board_stub_reset_all();
     fill_test_result(&r, 3U, 0U);
     assert(mram_store_save_test_result(&r) == BOARD_ERR_INVALID_ARG);
 

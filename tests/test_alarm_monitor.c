@@ -38,6 +38,7 @@ static void reset_reads(void) {
 static void begin(SystemContext *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     ctx->state = STATE_DUTY;
+    board_stub_reset_all();
     system_event_queue_init();
     reset_reads();
     set_wide_thresholds(ctx);

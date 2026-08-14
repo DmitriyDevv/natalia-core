@@ -31,6 +31,11 @@ static uint8_t board_stub_initialized;
 
 static bool board_stub_mram_write_fail;
 
+static uint8_t board_stub_mram_crc_valid[BOARD_STUB_MRAM_COPY_COUNT] = {1U, 1U};
+
+static uint8_t board_stub_nand_powered_override[BOARD_STUB_NAND_BANK_COUNT];
+static uint8_t board_stub_nand_powered_override_value[BOARD_STUB_NAND_BANK_COUNT];
+
 static uint8_t board_stub_test_result_valid[2] = {1U, 1U};
 
 static uint32_t board_stub_rtc_1hz_pending;
@@ -49,6 +54,19 @@ static uint16_t board_stub_rtc_milliseconds;
 
 void board_stub_set_mram_write_fail(bool fail) {
     board_stub_mram_write_fail = fail;
+}
+
+void board_stub_set_mram_crc_valid(uint8_t copy_id, bool valid) {
+    if ((copy_id == 1U) || (copy_id == 2U)) {
+        board_stub_mram_crc_valid[copy_id - 1U] = valid ? 1U : 0U;
+    }
+}
+
+void board_stub_set_nand_powered(uint8_t bank_id, bool powered) {
+    if ((bank_id == 1U) || (bank_id == 2U)) {
+        board_stub_nand_powered_override[bank_id - 1U] = 1U;
+        board_stub_nand_powered_override_value[bank_id - 1U] = powered ? 1U : 0U;
+    }
 }
 
 void board_stub_set_rtc_time(uint32_t seconds, uint16_t milliseconds) {
@@ -88,6 +106,55 @@ void board_stub_set_test_result_valid(uint8_t nand_bank, bool valid) {
     if ((nand_bank == 1U) || (nand_bank == 2U)) {
         board_stub_test_result_valid[nand_bank - 1U] = valid ? 1U : 0U;
     }
+}
+
+void board_stub_reset_all(void) {
+    (void)memset(board_stub_nand, 0xFF, sizeof(board_stub_nand));
+    (void)memset(board_stub_mram, 0, sizeof(board_stub_mram));
+    (void)memset(board_stub_mram_test_result, 0, sizeof(board_stub_mram_test_result));
+    (void)memset(board_stub_nand_committed_packets, 0, sizeof(board_stub_nand_committed_packets));
+    (void)memset(board_stub_nand_read_packet_count, 0, sizeof(board_stub_nand_read_packet_count));
+    (void)memset(board_stub_nand_read_next_packet, 0, sizeof(board_stub_nand_read_next_packet));
+    (void)memset(board_stub_nand_is_full, 0, sizeof(board_stub_nand_is_full));
+    (void)memset(board_stub_nand_is_powered, 0, sizeof(board_stub_nand_is_powered));
+    (void)memset(board_stub_nand_is_connected, 0, sizeof(board_stub_nand_is_connected));
+
+    board_stub_mram_write_fail = false;
+
+    board_stub_mram_crc_valid[0] = 1U;
+    board_stub_mram_crc_valid[1] = 1U;
+
+    board_stub_nand_powered_override[0] = 0U;
+    board_stub_nand_powered_override[1] = 0U;
+    board_stub_nand_powered_override_value[0] = 0U;
+    board_stub_nand_powered_override_value[1] = 0U;
+
+    board_stub_test_result_valid[0] = 1U;
+    board_stub_test_result_valid[1] = 1U;
+
+    board_stub_rtc_1hz_pending = 0U;
+    board_stub_ped_trigger_pending = 0U;
+
+    board_stub_digital_temp_milli[0] = 25000;
+    board_stub_digital_temp_milli[1] = 25000;
+    board_stub_digital_temp_ready[0] = 1U;
+    board_stub_digital_temp_ready[1] = 1U;
+    board_stub_digital_temp_valid[0] = 1U;
+    board_stub_digital_temp_valid[1] = 1U;
+    board_stub_power_mv[0] = 3300U;
+    board_stub_power_mv[1] = 3300U;
+    board_stub_power_ua[0] = 0;
+    board_stub_power_ua[1] = 0;
+    board_stub_power_ready[0] = 1U;
+    board_stub_power_ready[1] = 1U;
+    board_stub_ped_is_powered = 1U;
+
+    board_stub_rtc_seconds = 0U;
+    board_stub_rtc_milliseconds = 0U;
+
+    board_comm_stub_reset();
+
+    board_stub_initialized = 1U;
 }
 
 static void board_stub_init_once(void) {
@@ -295,9 +362,7 @@ BoardStatus board_mram_check_crc(uint8_t copy_id, uint8_t *is_valid) {
         return status;
     }
 
-    (void)copy_index;
-
-    *is_valid = 1U;
+    *is_valid = board_stub_mram_crc_valid[copy_index];
 
     return BOARD_OK;
 }
@@ -447,7 +512,11 @@ BoardStatus board_nand_is_powered(uint8_t bank_id, uint8_t *is_powered) {
         return status;
     }
 
-    *is_powered = board_stub_nand_is_powered[bank_index];
+    if (board_stub_nand_powered_override[bank_index] != 0U) {
+        *is_powered = board_stub_nand_powered_override_value[bank_index];
+    } else {
+        *is_powered = board_stub_nand_is_powered[bank_index];
+    }
 
     return BOARD_OK;
 }
@@ -1127,11 +1196,19 @@ static uint16_t board_comm_stub_rx_address_from;
 static uint16_t board_comm_stub_rx_address_to;
 static bool board_comm_stub_rx_pending;
 
-static uint8_t board_comm_stub_tx_data[BOARD_COMM_MAX_MESSAGE_DATA];
-static uint16_t board_comm_stub_tx_length;
-static uint16_t board_comm_stub_tx_message_id;
-static uint16_t board_comm_stub_tx_address_to;
+#define BOARD_COMM_STUB_TX_CAPACITY 8U
+
+typedef struct {
+    uint8_t data[BOARD_COMM_MAX_MESSAGE_DATA];
+    uint16_t length;
+    uint16_t message_id;
+    uint16_t address_to;
+} BoardCommStubTxEntry;
+
+static BoardCommStubTxEntry board_comm_stub_tx_ring[BOARD_COMM_STUB_TX_CAPACITY];
 static uint32_t board_comm_stub_tx_total;
+static uint32_t board_comm_stub_tx_failed;
+static uint32_t board_comm_stub_send_fail_remaining;
 
 void board_comm_stub_reset(void) {
     board_comm_stub_rx_length = 0U;
@@ -1140,10 +1217,54 @@ void board_comm_stub_reset(void) {
     board_comm_stub_rx_address_to = 0U;
     board_comm_stub_rx_pending = false;
 
-    board_comm_stub_tx_length = 0U;
-    board_comm_stub_tx_message_id = 0U;
-    board_comm_stub_tx_address_to = 0U;
     board_comm_stub_tx_total = 0U;
+    board_comm_stub_tx_failed = 0U;
+    board_comm_stub_send_fail_remaining = 0U;
+}
+
+void board_comm_stub_set_send_fail(uint32_t fail_count) {
+    board_comm_stub_send_fail_remaining = fail_count;
+}
+
+/* Copies the successfully sent message with ordinal `index` (0 = first sent)
+ * into the caller's buffers. Fails if the ordinal was never sent or has already
+ * been overwritten in the ring (only the last BOARD_COMM_STUB_TX_CAPACITY are
+ * retained). */
+static bool board_comm_stub_tx_copy_entry(uint32_t index,
+                                          uint16_t* message_id,
+                                          uint16_t* address_to,
+                                          uint8_t* buffer,
+                                          uint16_t capacity,
+                                          uint16_t* length) {
+    const BoardCommStubTxEntry* entry;
+
+    if (index >= board_comm_stub_tx_total) {
+        return false;
+    }
+
+    if ((board_comm_stub_tx_total - index) > BOARD_COMM_STUB_TX_CAPACITY) {
+        return false;
+    }
+
+    entry = &board_comm_stub_tx_ring[index % BOARD_COMM_STUB_TX_CAPACITY];
+
+    if (message_id != NULL) {
+        *message_id = entry->message_id;
+    }
+
+    if (address_to != NULL) {
+        *address_to = entry->address_to;
+    }
+
+    if (length != NULL) {
+        *length = entry->length;
+    }
+
+    if ((buffer != NULL) && (capacity >= entry->length)) {
+        (void)memcpy(buffer, entry->data, entry->length);
+    }
+
+    return true;
 }
 
 void board_comm_stub_inject_rx(uint16_t message_id,
@@ -1179,23 +1300,19 @@ bool board_comm_stub_last_tx(uint16_t* message_id,
         return false;
     }
 
-    if (message_id != NULL) {
-        *message_id = board_comm_stub_tx_message_id;
-    }
+    return board_comm_stub_tx_copy_entry(board_comm_stub_tx_total - 1U,
+                                         message_id, address_to,
+                                         buffer, capacity, length);
+}
 
-    if (address_to != NULL) {
-        *address_to = board_comm_stub_tx_address_to;
-    }
-
-    if (length != NULL) {
-        *length = board_comm_stub_tx_length;
-    }
-
-    if ((buffer != NULL) && (capacity >= board_comm_stub_tx_length)) {
-        (void)memcpy(buffer, board_comm_stub_tx_data, board_comm_stub_tx_length);
-    }
-
-    return true;
+bool board_comm_stub_tx_at(uint32_t index,
+                           uint16_t* message_id,
+                           uint16_t* address_to,
+                           uint8_t* buffer,
+                           uint16_t capacity,
+                           uint16_t* length) {
+    return board_comm_stub_tx_copy_entry(index, message_id, address_to,
+                                         buffer, capacity, length);
 }
 
 BoardStatus board_comm_init(void) {
@@ -1212,9 +1329,20 @@ void board_comm_poll(uint32_t now_ms) {
 
 BoardStatus board_comm_send(const BoardCommMessage* message) {
     uint16_t length;
+    BoardCommStubTxEntry* entry;
 
     if (message == NULL) {
         return BOARD_ERR_INVALID_ARG;
+    }
+
+    /* Message accepted into the transmitter; when a failure is armed the
+     * transmission fails asynchronously and is reported through
+     * board_comm_get_status().tx_messages_failed, which is the path the
+     * transport retry logic consumes. */
+    if (board_comm_stub_send_fail_remaining > 0U) {
+        --board_comm_stub_send_fail_remaining;
+        ++board_comm_stub_tx_failed;
+        return BOARD_OK;
     }
 
     length = message->length;
@@ -1222,13 +1350,15 @@ BoardStatus board_comm_send(const BoardCommMessage* message) {
         length = (uint16_t)BOARD_COMM_MAX_MESSAGE_DATA;
     }
 
+    entry = &board_comm_stub_tx_ring[board_comm_stub_tx_total % BOARD_COMM_STUB_TX_CAPACITY];
+
     if ((message->data != NULL) && (length > 0U)) {
-        (void)memcpy(board_comm_stub_tx_data, message->data, length);
+        (void)memcpy(entry->data, message->data, length);
     }
 
-    board_comm_stub_tx_message_id = message->message_id;
-    board_comm_stub_tx_address_to = message->address_to;
-    board_comm_stub_tx_length = length;
+    entry->message_id = message->message_id;
+    entry->address_to = message->address_to;
+    entry->length = length;
     ++board_comm_stub_tx_total;
 
     return BOARD_OK;
@@ -1270,5 +1400,5 @@ void board_comm_get_status(BoardCommStatus* status) {
     status->is_online = true;
     status->tx_busy = false;
     status->tx_messages_ok = board_comm_stub_tx_total;
-    status->tx_messages_failed = 0U;
+    status->tx_messages_failed = board_comm_stub_tx_failed;
 }

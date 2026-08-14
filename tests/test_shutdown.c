@@ -29,6 +29,7 @@ static void begin_test(SystemContext *ctx, SystemState state) {
     ctx->nand1.bank = NAND_BANK_1;
     ctx->nand2.bank = NAND_BANK_2;
 
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();

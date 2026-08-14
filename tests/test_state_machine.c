@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdbool.h>
 
+#include "board_stub.h"
 #include "observe.h"
 #include "state.h"
 
@@ -16,6 +17,7 @@ static void init_done_to_duty(void) {
         .msg_id = 0U
     };
 
+    board_stub_reset_all();
     handle_event(&ctx, &event);
 
     assert(ctx.state == STATE_DUTY);
@@ -33,6 +35,7 @@ static void init_done_to_alarm(void) {
         .msg_id = 0U
     };
 
+    board_stub_reset_all();
     handle_event(&ctx, &event);
 
     assert(ctx.state == STATE_ALARM);
@@ -49,6 +52,7 @@ static void init_fail_to_alarm(void) {
         .msg_id = 0U
     };
 
+    board_stub_reset_all();
     handle_event(&ctx, &event);
 
     assert(ctx.state == STATE_ALARM);
@@ -69,6 +73,7 @@ static void duty_start_erase_with_payload(void) {
         }
     };
 
+    board_stub_reset_all();
     handle_event(&ctx, &event);
 
     assert(ctx.state == STATE_ERASE);

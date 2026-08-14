@@ -778,9 +778,17 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 Модель занимает около 1 МБ статической памяти на два банка.
 
 Инициализация выполняется один раз за процесс (`board_stub_init_once`): NAND
-заполняется `0xFF`, MRAM — нулями. **Функции полного сброса нет**, поэтому
-внутри одного тестового бинарника состояние NAND и MRAM переносится из теста в
-тест.
+заполняется `0xFF`, MRAM — нулями.
+
+Для сброса между проверочными функциями есть `board_stub_reset_all()`: она
+возвращает всю модель к исходному состоянию — NAND заполнен `0xFF`, счётчики
+пакетов и признаки заполнения обнулены, питание банков выключено, MRAM (включая
+образы результатов теста) обнулена, а все инжектируемые значения (температуры,
+мониторы питания, питание ПЭД, время RTC, счётчики событий, признаки отказов)
+возвращены к умолчаниям. Она же вызывает `board_comm_stub_reset()`, так что слот
+приёма, кольцо передачи и взведённый отказ передачи тоже очищаются. Все тестовые
+программы вызывают её в начале каждой проверочной функции, поэтому состояние
+модели не переносится из одной функции в другую внутри одного бинарника.
 
 ### Система
 
@@ -795,22 +803,24 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 | Функция | Поведение |
 | --- | --- |
 | `board_mram_read` / `board_mram_write` | Настоящее чтение/запись массива в ОЗУ с проверкой границ копии (1024 байта). |
-| `board_mram_check_crc` | **Всегда `is_valid = 1`.** Путь «обе копии испорчены -> `ALARM_MRAM`» на хосте недостижим. |
+| `board_mram_check_crc` | Отдаёт флаг, заданный `board_stub_set_mram_crc_valid()` отдельно для каждой копии; по умолчанию обе валидны. |
 | `board_mram_restore_copy` | Настоящее копирование копии в копию. |
 | `board_mram_write_test_result` / `board_mram_read_test_result` | Настоящие, отдельная область на банк и копию. |
 
 Отказ записи включается тестом: `board_stub_set_mram_write_fail(true)` заставляет
-`board_mram_write` возвращать `BOARD_ERR_IO`. Признак валидности образа
-результатов теста задаётся `board_stub_set_test_result_valid(bank, false)` — так
-проверяется путь «банк ни разу не тестировался». Оба объявления — в
-`Algorithm/include/board_stub.h`.
+`board_mram_write` возвращать `BOARD_ERR_IO`. Признак валидности CRC каждой копии
+задаётся `board_stub_set_mram_crc_valid(copy_id, false)` — так проверяются путь
+восстановления резервной копии и авария `ALARM_MRAM` при двух испорченных копиях.
+Признак валидности образа результатов теста задаётся
+`board_stub_set_test_result_valid(bank, false)` — так проверяется путь «банк ни
+разу не тестировался». Все объявления — в `Algorithm/include/board_stub.h`.
 
 ### NAND
 
 | Функция | Поведение |
 | --- | --- |
 | `board_nand_power_on` / `_off`, `_connect` / `_disconnect` | Меняют флаги модели, `BOARD_OK`. |
-| `board_nand_is_powered` | Настоящий флаг модели: `1` после `board_nand_power_on`, `0` после `_off`. Изначально `0`. |
+| `board_nand_is_powered` | Настоящий флаг модели: `1` после `board_nand_power_on`, `0` после `_off`. Изначально `0`. `board_stub_set_nand_powered()` перекрывает флаг отдельно для банка — так моделируется «питание включили, подтверждения нет» (путь `ALARM_NAND_PS`). |
 | `board_nand_read` / `board_nand_write` | Настоящие, с проверкой границ банка. |
 | `board_nand_open_write` | Задаёт стартовый счётчик пакетов; выставляет признак заполнения, если счётчик достиг ёмкости. |
 | `board_nand_write_packet` | Настоящая запись 2048 байт, инкремент счётчика. При заполненном банке — `BOARD_ERR_IO` и признак заполнения. |
@@ -869,7 +879,10 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 Полный список управляющих функций заглушки (`Algorithm/include/board_stub.h`):
 
 ```c
+void board_stub_reset_all(void);
+
 void board_stub_set_mram_write_fail(bool fail);
+void board_stub_set_mram_crc_valid(uint8_t copy_id, bool valid);
 void board_stub_set_test_result_valid(uint8_t nand_bank, bool valid);
 
 void board_stub_set_rtc_1hz_events(uint32_t count);
@@ -880,6 +893,7 @@ void board_stub_set_digital_temp(BoardTempSensorId sensor, int32_t milli_c, bool
 void board_stub_set_power_monitor(BoardPowerMonitorId monitor, uint32_t mv,
                                   int32_t ua, bool ready);
 void board_stub_set_ped_powered(bool powered);
+void board_stub_set_nand_powered(uint8_t bank_id, bool powered);
 ```
 
 Единицы совпадают с контрактом Board_API: температура — м°C, напряжение — мВ,
@@ -899,15 +913,16 @@ void board_stub_set_ped_powered(bool powered);
 
 ### Связь
 
-Настоящая модель на **один слот** приёма и **один слот** передачи.
+Настоящая модель на **один слот** приёма и **кольцевой буфер передачи на 8
+сообщений**.
 
 | Функция | Поведение |
 | --- | --- |
 | `board_comm_init` | Сбрасывает слоты, `BOARD_OK`. |
 | `board_comm_close` / `board_comm_poll` | Ничего не делают. |
-| `board_comm_send` | Сохраняет сообщение в слот передачи, увеличивает счётчик. |
+| `board_comm_send` | Сохраняет сообщение в кольцевой буфер, увеличивает счётчик успешных передач. При взведённом отказе (см. ниже) сообщение не сохраняется, а увеличивается счётчик неудачных. |
 | `board_comm_receive` | Отдаёт ожидающее сообщение и снимает признак; если его нет — `BOARD_ERR_NOT_READY`. |
-| `board_comm_get_status` | `is_online = true`, `tx_busy = false`, `tx_messages_failed = 0`. |
+| `board_comm_get_status` | `is_online = true`, `tx_busy = false`, `tx_messages_ok` / `tx_messages_failed` — счётчики успешных и неудачных передач. |
 
 Управление из теста (`Algorithm/include/board_comm_stub.h`):
 
@@ -920,24 +935,39 @@ uint32_t board_comm_stub_tx_count(void);
 bool     board_comm_stub_last_tx(uint16_t* message_id, uint16_t* address_to,
                                  uint8_t* buffer, uint16_t capacity,
                                  uint16_t* length);
+bool     board_comm_stub_tx_at(uint32_t index,
+                               uint16_t* message_id, uint16_t* address_to,
+                               uint8_t* buffer, uint16_t capacity,
+                               uint16_t* length);
+void     board_comm_stub_set_send_fail(uint32_t fail_count);
 ```
 
-Оба слота одиночные: второй `inject_rx` до вызова `transport_poll()` затирает
-первый, а `board_comm_stub_last_tx()` отдаёт только последнее переданное
-сообщение. Чтобы проверить несколько ответов подряд, разбирайте их по шагам,
-сверяясь с `board_comm_stub_tx_count()`.
+Слот приёма одиночный: второй `inject_rx` до вызова `transport_poll()` затирает
+первый. Передача же копится в кольцевом буфере на 8 сообщений: любое переданное
+сообщение читается по порядковому номеру через `board_comm_stub_tx_at()`
+(0 — первое переданное), а `board_comm_stub_last_tx()` отдаёт последнее и
+оставлен для совместимости. Хранятся только последние 8 сообщений; запрос более
+старого номера возвращает `false`.
+
+Отказ передачи взводится `board_comm_stub_set_send_fail(N)`: ближайшие `N`
+попыток передачи «проваливаются». `board_comm_send` при этом принимает сообщение
+(возвращает `BOARD_OK`), но передача считается неуспешной и отражается в
+`board_comm_get_status().tx_messages_failed` — именно этот асинхронный путь
+разбирает логика повторов транспорта (`TRANSPORT_TX_MAX_RETRIES`). Провалившиеся
+сообщения в кольцевой буфер не попадают. Счётчик отказов и весь буфер сбрасывает
+`board_comm_stub_reset()`.
 
 ### Сводка ограничений
 
-Через хостовую заглушку **нельзя** проверить: обработку неверной CRC в MRAM
-(`board_mram_check_crc` всегда валидна), таймауты и отказы NAND, отказы и
+Через хостовую заглушку **нельзя** проверить: таймауты и отказы NAND, отказы и
 повторы вывода данных, обмен ПЭД (статус, конфигурация, чтение события),
 аналоговый канал температуры, самостоятельный ход времени. Для этого нужна либо
 доработка заглушки, либо стендовая проверка (`tests/firmware/`).
 
 Проверяются, наоборот, полностью: разбор протокола и сборка всех ТС, вся матрица
 допустимости команд по режимам, длительные режимы ERASE/TEST/DUMP до конца,
-работа с MRAM включая отказ записи, цикл контроля аварий по цифровым датчикам и
+работа с MRAM включая отказ записи и неверную CRC копий (восстановление резервной
+копии и авария `ALARM_MRAM`), цикл контроля аварий по цифровым датчикам и
 мониторам питания, сбор аппаратных событий.
 
 ---

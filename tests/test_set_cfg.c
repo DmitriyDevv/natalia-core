@@ -120,6 +120,7 @@ static void payload_is_parsed_field_for_field(void) {
     uint8_t payload[SET_CFG_SIZE];
 
     memset(&ctx, 0, sizeof(ctx));
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     build_reference_payload(payload);
@@ -141,6 +142,7 @@ static void reserved_write_control_bit_is_rejected(void) {
     uint8_t payload[SET_CFG_SIZE];
 
     memset(&ctx, 0, sizeof(ctx));
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     build_reference_payload(payload);
@@ -158,6 +160,7 @@ static void reserved_can_control_bit_is_rejected(void) {
     uint8_t payload[SET_CFG_SIZE];
 
     memset(&ctx, 0, sizeof(ctx));
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     build_reference_payload(payload);
@@ -175,6 +178,7 @@ static void wrong_length_is_rejected(void) {
     uint8_t payload[SET_CFG_SIZE];
 
     memset(&ctx, 0, sizeof(ctx));
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     build_reference_payload(payload);
@@ -191,6 +195,7 @@ static void make_reference_event(SystemEvent* event) {
     SystemContext ctx;
 
     memset(&ctx, 0, sizeof(ctx));
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     build_reference_payload(payload);

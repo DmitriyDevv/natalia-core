@@ -18,6 +18,7 @@ static void rtc_collected_in_duty_ped_skipped(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_DUTY;
+    board_stub_reset_all();
     system_event_queue_init();
 
     board_stub_set_rtc_1hz_events(3U);
@@ -39,6 +40,7 @@ static void rtc_and_ped_collected_in_observe(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_OBSERVE;
+    board_stub_reset_all();
     system_event_queue_init();
 
     board_stub_set_rtc_1hz_events(1U);
@@ -66,6 +68,7 @@ static void take_drains_counter(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_OBSERVE;
+    board_stub_reset_all();
     system_event_queue_init();
 
     board_stub_set_rtc_1hz_events(2U);

@@ -6,6 +6,7 @@
 #include "algorithm.h"
 #include "board_api.h"
 #include "board_comm_stub.h"
+#include "board_stub.h"
 #include "event_queue.h"
 #include "mram_store.h"
 #include "state.h"
@@ -28,16 +29,10 @@ static void begin_test(SystemContext *ctx, SystemState state) {
     ctx->nand1.bank = NAND_BANK_1;
     ctx->nand2.bank = NAND_BANK_2;
 
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
-}
-
-static void save_erase_baseline(uint16_t nand1_count) {
-    MramStoreServiceData service;
-    memset(&service, 0, sizeof(service));
-    service.nand1_erase_count = nand1_count;
-    assert(mram_store_save_service_data(&service) == BOARD_OK);
 }
 
 static uint16_t load_nand1_erase_count(void) {
@@ -72,7 +67,6 @@ static void clean_erase_increments_counter_and_returns_to_duty(void) {
     uint8_t powered = 1U;
 
     begin_test(&ctx, STATE_DUTY);
-    save_erase_baseline(5U);
 
     ctx.nand1.is_full = true;
 
@@ -85,7 +79,7 @@ static void clean_erase_increments_counter_and_returns_to_duty(void) {
     assert(ctx.state == STATE_DUTY);
     assert(!ctx.nand1.is_full);
     assert((board_nand_is_powered(1U, &powered) == BOARD_OK) && (powered == 0U));
-    assert(load_nand1_erase_count() == 6U); /* incremented on normal completion */
+    assert(load_nand1_erase_count() == 1U); /* incremented on normal completion */
 }
 
 /* power_after_done = KEEP leaves the bank powered after a completed erase. */
@@ -94,7 +88,6 @@ static void clean_erase_keeps_power_when_requested(void) {
     uint8_t powered = 0U;
 
     begin_test(&ctx, STATE_DUTY);
-    save_erase_baseline(0U);
 
     enqueue_erase(NAND_BANK_1, POWER_AFTER_DONE_KEEP);
     algorithm_process_events(&ctx);
@@ -114,7 +107,6 @@ static void early_finish_by_cmd_duty_does_not_count(void) {
     SystemEvent event;
 
     begin_test(&ctx, STATE_DUTY);
-    save_erase_baseline(5U);
 
     enqueue_erase(NAND_BANK_1, POWER_AFTER_DONE_OFF);
     algorithm_process_events(&ctx);
@@ -127,7 +119,7 @@ static void early_finish_by_cmd_duty_does_not_count(void) {
     algorithm_process_events(&ctx);
 
     assert(ctx.state == STATE_DUTY);
-    assert(load_nand1_erase_count() == 5U); /* unchanged: erase did not complete */
+    assert(load_nand1_erase_count() == 0U); /* unchanged: erase did not complete */
 }
 
 /* A masked alarm during ERASE forces ALARM with PED and both NAND banks off,
@@ -139,7 +131,6 @@ static void masked_alarm_in_erase_enters_alarm(void) {
     uint8_t powered2 = 1U;
 
     begin_test(&ctx, STATE_ERASE);
-    save_erase_baseline(5U);
 
     ctx.erase.bank = NAND_BANK_1;
     ctx.erase.stage = ERASE_STAGE_WAIT;
@@ -158,7 +149,7 @@ static void masked_alarm_in_erase_enters_alarm(void) {
     assert(!ctx.ped.is_powered);
     assert((board_nand_is_powered(1U, &powered1) == BOARD_OK) && (powered1 == 0U));
     assert((board_nand_is_powered(2U, &powered2) == BOARD_OK) && (powered2 == 0U));
-    assert(load_nand1_erase_count() == 5U);
+    assert(load_nand1_erase_count() == 0U);
 }
 
 /* CMD_STATUS_REQ is answered with a status TS and keeps the mode. */

@@ -44,6 +44,7 @@ static void known_command_is_parsed_and_enqueued(void) {
     uint8_t payload[SHORT_PAYLOAD_SIZE];
 
     memset(&ctx, 0, sizeof(ctx));
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -68,6 +69,7 @@ static void version_request_ignores_payload_and_enqueues(void) {
     uint8_t payload[SHORT_PAYLOAD_SIZE];
 
     memset(&ctx, 0, sizeof(ctx));
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -98,6 +100,7 @@ static void version_request_replies_with_version_ts(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_DUTY;
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -133,6 +136,7 @@ static void set_device_id_persists_to_mram(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_DUTY;
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -169,6 +173,7 @@ static void set_device_id_in_shutdown_is_ram_only(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_SHUTDOWN;
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -203,6 +208,7 @@ static void stored_addresses_applied_on_load(void) {
     uint16_t address_to = 0U;
 
     memset(&ctx, 0, sizeof(ctx));
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -234,6 +240,7 @@ static void message_for_other_node_is_dropped(void) {
     uint8_t payload[SHORT_PAYLOAD_SIZE];
 
     memset(&ctx, 0, sizeof(ctx));
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -252,6 +259,7 @@ static void sputniks_time_ignored_when_can_control_bit_set(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.can_control = CAN_CTRL_IGN_SPUTNIK;
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -272,6 +280,7 @@ static void sputniks_time_processed_when_can_control_bit_clear(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.can_control = 0U;
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -294,6 +303,7 @@ static void reply_targets_sender_when_can_control_bit_set(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.can_control = CAN_CTRL_DEST_SENDER;
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -318,6 +328,7 @@ static void reply_targets_stored_address_when_can_control_bit_clear(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.can_control = 0U;
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -341,6 +352,7 @@ static void test_result_request_decodes_bank_and_mram_copy(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_DUTY;
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -377,6 +389,7 @@ static void test_result_action_sends_long_ts_0203(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_DUTY;
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -415,6 +428,7 @@ static void test_result_request_rejects_invalid_mram_copy(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_DUTY;
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -438,6 +452,7 @@ static void test_result_invalid_bank_replies_err_other(void) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_DUTY;
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -472,6 +487,7 @@ static void observe_params_validation(void) {
     ctx.state = STATE_DUTY;
 
     /* invalid: event format on (mode 1) but event count = 0 */
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -480,6 +496,7 @@ static void observe_params_validation(void) {
     assert(system_event_queue_get_count() == 0U);
 
     /* invalid: Спектр-1 selected but Nhist = 0 */
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -488,6 +505,7 @@ static void observe_params_validation(void) {
     assert(system_event_queue_get_count() == 0U);
 
     /* valid: events (mode 1, count 1) + Спектр-1 with Nhist = 256 */
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
@@ -517,6 +535,7 @@ static void telemetry_frame_0d02(void) {
     ctx.alarm_status = 0x00A5U;
     ctx.masked_alarm = 0x0084U;
     ctx.nand1.is_full = true;
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();

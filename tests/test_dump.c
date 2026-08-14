@@ -7,6 +7,7 @@
 #include "algorithm.h"
 #include "board_api.h"
 #include "board_comm_stub.h"
+#include "board_stub.h"
 #include "dump_mode_config.h"
 #include "event_queue.h"
 #include "mram_store.h"
@@ -33,6 +34,7 @@ static void begin_test(SystemContext *ctx, SystemState state) {
     ctx->nand1.bank = NAND_BANK_1;
     ctx->nand2.bank = NAND_BANK_2;
 
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();

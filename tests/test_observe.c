@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "board_stub.h"
 #include "ni_packet.h"
 #include "observe.h"
 #include "state.h"
@@ -12,6 +13,7 @@
 #define OBSERVE_PARAMS_SPECTRUM_1 (0x40U)
 
 static void setup_active(SystemContext* ctx, uint16_t params) {
+    board_stub_reset_all();
     memset(ctx, 0, sizeof(*ctx));
     ctx->state = STATE_OBSERVE;
     ctx->observe.stage = OBSERVE_STAGE_ACTIVE;

@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "board_comm_stub.h"
+#include "board_stub.h"
 #include "event_queue.h"
 #include "state.h"
 #include "transport.h"
@@ -61,6 +62,7 @@ static void prepare(SystemContext* ctx, SystemState mode, SystemEvent* event,
                     EventType type) {
     memset(ctx, 0, sizeof(*ctx));
     ctx->state = mode;
+    board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
