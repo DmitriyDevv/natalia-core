@@ -27,6 +27,7 @@
 #define TELEMETRY_SIZE         (109U)
 #define UNKNOWN_MSG_ID         (0x0FFFU)
 #define SHORT_PAYLOAD_SIZE   (6U)
+#define VERSION_PAYLOAD_SIZE (3U)
 #define FILL_BYTE            (0xAAU)
 #define ADDR_NA              (0x1EU)
 #define ADDR_BVS             (0x05U)
@@ -120,7 +121,7 @@ static void version_request_replies_with_version_ts(void) {
     assert(board_comm_stub_last_tx(&message_id, &address_to, got, sizeof(got),
                                    &length));
     assert(message_id == TS_VERSION_MSG_ID);
-    assert(length == SHORT_PAYLOAD_SIZE);
+    assert(length == VERSION_PAYLOAD_SIZE);
     assert(got[0] == 255U);
     assert(got[1] == 255U);
     assert(got[2] == 255U);

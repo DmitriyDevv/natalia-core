@@ -195,3 +195,83 @@ target_compile_options(test_alarm_monitor PRIVATE
 )
 
 add_test(NAME test_alarm_monitor COMMAND test_alarm_monitor)
+
+add_executable(test_event_queue
+        test_event_queue.c
+)
+
+target_link_libraries(test_event_queue PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_event_queue PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_event_queue COMMAND test_event_queue)
+
+add_executable(test_alarm_mode
+        test_alarm_mode.c
+)
+
+target_link_libraries(test_alarm_mode PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_alarm_mode PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_alarm_mode COMMAND test_alarm_mode)
+
+add_executable(test_duty
+        test_duty.c
+)
+
+target_link_libraries(test_duty PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_duty PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_duty COMMAND test_duty)
+
+add_executable(test_nand_full
+        test_nand_full.c
+)
+
+target_link_libraries(test_nand_full PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_nand_full PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_nand_full COMMAND test_nand_full)
+
+add_executable(test_mram_recovery
+        test_mram_recovery.c
+)
+
+target_link_libraries(test_mram_recovery PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_mram_recovery PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_mram_recovery COMMAND test_mram_recovery)

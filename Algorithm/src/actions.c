@@ -326,6 +326,7 @@ ActionResult action_check_mram(SystemContext* ctx) {
 
     if (!status.copy1_valid && !status.copy2_valid) {
         ctx->alarm_status |= MRAM_STORE_ALARM_BOTH_COPIES_INVALID;
+        ctx->masked_alarm |= MRAM_STORE_ALARM_BOTH_COPIES_INVALID;
         return ACTION_ALARM;
     }
 
@@ -1357,7 +1358,7 @@ ActionResult action_finish_observe_full(SystemContext *ctx) {
     result = action_update_service_data(ctx);
     if (result != ACTION_OK) {
         ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        return result;
+        return ACTION_ALARM;
     }
 
     ctx->observe.stage = OBSERVE_STAGE_EXIT_FULL;
@@ -1480,7 +1481,8 @@ ActionResult action_clear_alarm_status(SystemContext* ctx) {
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
     }
-    ctx->alarm_status = 0U;
+
+    ctx->alarm_status &= ALARM_NON_MASKABLE_MASK;
     return ACTION_OK;
 }
 

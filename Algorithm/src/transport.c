@@ -130,10 +130,11 @@ static uint16_t transport_effective_destination(void) {
 }
 
 static BoardStatus transport_enqueue_short_message(uint16_t message_id,
-                                                   const uint8_t* payload) {
+                                                   const uint8_t* payload,
+                                                   uint16_t length) {
     TransportTxItem* item;
 
-    if (payload == NULL) {
+    if ((payload == NULL) || (length == 0U) || (length > TRANSPORT_SHORT_PAYLOAD_SIZE)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -145,11 +146,11 @@ static BoardStatus transport_enqueue_short_message(uint16_t message_id,
 
     item->message_id = message_id;
     item->address_to = transport_effective_destination();
-    item->length = TRANSPORT_SHORT_PAYLOAD_SIZE;
+    item->length = length;
     item->long_data = NULL;
     item->retries_done = 0U;
 
-    memcpy(item->payload, payload, TRANSPORT_SHORT_PAYLOAD_SIZE);
+    memcpy(item->payload, payload, length);
 
     transport_tx_head = transport_next_tx_index(transport_tx_head);
     ++transport_tx_count;
@@ -423,7 +424,7 @@ BoardStatus transport_send_ack(uint16_t command_id,
     payload[5] = TRANSPORT_FILL_BYTE;
 
     return transport_enqueue_short_message(TRANSPORT_TS_ACK_MSG_ID,
-                                           payload);
+                                           payload, sizeof(payload));
 }
 
 BoardStatus transport_send_dump_ack(uint16_t command_id,
@@ -439,7 +440,7 @@ BoardStatus transport_send_dump_ack(uint16_t command_id,
     payload[5] = (uint8_t)((packet_count >> 16U) & 0xFFU);
 
     return transport_enqueue_short_message(TRANSPORT_TS_ACK_MSG_ID,
-                                           payload);
+                                           payload, sizeof(payload));
 }
 
 static uint8_t transport_encode_previous_state(SystemState state) {
@@ -551,7 +552,7 @@ BoardStatus transport_send_status(const SystemContext* ctx) {
     payload[5] = (uint8_t)((board_status_word >> 8U) & 0x00FFUL);
 
     return transport_enqueue_short_message(TRANSPORT_TS_STATUS_MSG_ID,
-                                           payload);
+                                           payload, sizeof(payload));
 }
 
 BoardStatus transport_send_telemetry(const SystemContext* ctx) {
@@ -667,7 +668,7 @@ BoardStatus transport_send_version(void) {
     payload[5] = TRANSPORT_FILL_BYTE;
 
     return transport_enqueue_short_message(TRANSPORT_TS_VERSION_MSG_ID,
-                                           payload);
+                                           payload, 3U);
 }
 
 BoardStatus transport_send_test_result(const uint8_t* data, uint16_t length) {

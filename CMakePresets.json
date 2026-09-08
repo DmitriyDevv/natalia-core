@@ -1,0 +1,41 @@
+{
+  "version": 2,
+  "configurePresets": [
+    {
+      "name": "host-tests",
+      "displayName": "Host Tests",
+      "description": "Build host tests with board API stubs.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/cmake-build-host-tests",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "NATALIA_BUILD_TESTS": "ON",
+        "NATALIA_USE_BOARD_STUBS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "host-tests",
+      "configurePreset": "host-tests"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "host-tests",
+      "configurePreset": "host-tests",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "event-queue",
+      "inherits": "host-tests",
+      "filter": {
+        "include": {
+          "name": "^test_event_queue$"
+        }
+      }
+    }
+  ]
+}

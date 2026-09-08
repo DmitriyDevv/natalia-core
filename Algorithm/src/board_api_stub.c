@@ -387,6 +387,7 @@ BoardStatus board_mram_restore_copy(uint8_t source_copy_id, uint8_t target_copy_
     (void)memcpy(board_stub_mram[target_index],
                  board_stub_mram[source_index],
                  BOARD_STUB_MRAM_COPY_SIZE);
+    board_stub_mram_crc_valid[target_index] = board_stub_mram_crc_valid[source_index];
 
     return BOARD_OK;
 }
@@ -1004,6 +1005,9 @@ BoardStatus board_rtc_set_time(const InstrumentTime *time) {
     if (time->milliseconds >= 1000U) {
         return BOARD_ERR_INVALID_ARG;
     }
+
+    board_stub_rtc_seconds = time->seconds;
+    board_stub_rtc_milliseconds = time->milliseconds;
 
     return BOARD_OK;
 }
