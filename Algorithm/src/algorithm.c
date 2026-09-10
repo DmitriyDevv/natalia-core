@@ -347,9 +347,13 @@ static void dump_mode_send_step(SystemContext* ctx) {
     }
 
     bytes_left = (size_t)(dump->packet_size - dump->send_offset);
-    status = board_usb_write(&dump->packet_buffer[dump->send_offset], bytes_left, &bytes_written);
+    status = board_data_write(&dump->packet_buffer[dump->send_offset], bytes_left, &bytes_written);
 
-    if ((status != BOARD_OK) || (bytes_written == 0U) || (bytes_written > bytes_left)) {
+    if ((status == BOARD_OK) && (bytes_written == 0U)) {
+        return;
+    }
+
+    if ((status != BOARD_OK) || (bytes_written > bytes_left)) {
         if (dump->usb_retry_count < DUMP_MODE_USB_MAX_RETRIES) {
             ++dump->usb_retry_count;
             return;

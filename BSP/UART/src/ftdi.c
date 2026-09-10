@@ -11,15 +11,20 @@
 #define FTDI_KERNEL_CLOCK_HZ (80000000UL)
 
 /*
- * FTDI/USART1 runs at 3 Mbaud from PCLK2 (80 MHz, the system clock) with
- * oversampling by 16: BRR = round(f_ck / baud) = round(80e6 / 3e6) = 27,
- * about -1.2% baud error, comfortably within the UART tolerance.
+ * FTDI/USART1 runs from PCLK2 (80 MHz, the system clock) with oversampling by
+ * 16: BRR = round(f_ck / baud) = round(80e6 / 1e6) = 80, exact at 1 Mbaud.
  *
- * To change the baud, edit FTDI_BAUDRATE; BRR is recomputed from the kernel
- * clock. With OVER16 the minimum is f_ck / 65535 and the maximum is f_ck / 16
- * (= 5 Mbaud here). The connected FTDI part must support the chosen rate.
- */ 
-#define FTDI_BAUDRATE (1000000UL)
+ * To change the baud, override FTDI_BAUDRATE at build time; BRR is recomputed
+ * from the kernel clock. With OVER16 the minimum is f_ck / 65535 and the maximum
+ * is f_ck / 16 (= 5 Mbaud here). The connected FTDI part must support the chosen
+ * rate: an FT232RL derives its rate from 3 MHz / n (n >= 2), so above 1 Mbaud
+ * only 1.5, 2 and 3 Mbaud exist. BRR is integer, so 80 MHz / 3 Mbaud rounds to
+ * 27 and the line actually runs at 2.963 Mbaud, 1.2 % low; 2 Mbaud (BRR = 40)
+ * and 1 Mbaud (BRR = 80) are exact.
+ */
+#ifndef FTDI_BAUDRATE
+#define FTDI_BAUDRATE (3000000UL)
+#endif
 
 #define FTDI_TX_RING_SIZE (2048U)
 #define FTDI_TX_RING_MASK (FTDI_TX_RING_SIZE - 1U)
@@ -33,8 +38,6 @@
 #define FTDI_RESET_PULSE_MS   (5UL)
 #define FTDI_PSON_TIMEOUT_MS  (400UL)
 
-#define FTDI_TX_POLL_TIMEOUT  (200000UL)
-
 static uint8_t ftdi_tx_ring[FTDI_TX_RING_SIZE];
 static volatile uint32_t ftdi_tx_head;
 static volatile uint32_t ftdi_tx_tail;
@@ -47,7 +50,20 @@ static uint8_t ftdi_initialized;
 static uint8_t ftdi_power_ok;
 static FtdiMode ftdi_mode;
 
+static void ftdi_dma_process_flags(void);
+
 void DMA1_Channel4_IRQHandler(void);
+void DMA1_CH4_IRQHandler(void);
+
+static void ftdi_tx_lock(void) {
+    NVIC_DisableIRQ(DMA1_Channel4_IRQn);
+    __DSB();
+    __ISB();
+}
+
+static void ftdi_tx_unlock(void) {
+    NVIC_EnableIRQ(DMA1_Channel4_IRQn);
+}
 
 static void ftdi_start_dma_locked(void) {
     uint32_t contiguous;
@@ -316,7 +332,10 @@ FtdiMode ftdi_get_mode(void) {
 }
 
 BoardStatus ftdi_write(const uint8_t *data, size_t size, size_t *accepted) {
-    size_t i;
+    uint32_t free_space;
+    uint32_t to_copy;
+    uint32_t first_chunk;
+    uint32_t head;
 
     if (accepted != NULL) {
         *accepted = 0U;
@@ -330,26 +349,47 @@ BoardStatus ftdi_write(const uint8_t *data, size_t size, size_t *accepted) {
         return BOARD_ERR_NOT_READY;
     }
 
-    for (i = 0U; i < size; ++i) {
-        uint32_t guard = 0U;
+    if (size == 0U) {
+        return BOARD_OK;
+    }
 
-        while ((USART1->ISR & USART_ISR_TXE) == 0U) {
-            if (++guard >= FTDI_TX_POLL_TIMEOUT) {
-                if (ftdi_mode == FTDI_MODE_LOG) {
-                    ftdi_log_dropped += ((uint32_t)size - (uint32_t)i);
-                }
-                if (accepted != NULL) {
-                    *accepted = i;
-                }
-                return BOARD_OK;
-            }
-        }
+    /*
+     * The producer (this function) owns head; the DMA IRQ owns tail/inflight
+     * and decrements count. count only shrinks under us, so a snapshot yields
+     * a lower bound on free space: we never overrun the region DMA is reading.
+     */
+    free_space = FTDI_TX_RING_SIZE - ftdi_tx_count;
 
-        USART1->TDR = data[i];
+    to_copy = (size < free_space) ? (uint32_t)size : free_space;
+
+    head = ftdi_tx_head;
+
+    first_chunk = FTDI_TX_RING_SIZE - head;
+    if (first_chunk > to_copy) {
+        first_chunk = to_copy;
+    }
+
+    if (first_chunk != 0U) {
+        (void)memcpy(&ftdi_tx_ring[head], data, first_chunk);
+    }
+    if (to_copy > first_chunk) {
+        (void)memcpy(&ftdi_tx_ring[0], &data[first_chunk], to_copy - first_chunk);
+    }
+
+    ftdi_tx_lock();
+    ftdi_tx_head = (head + to_copy) & FTDI_TX_RING_MASK;
+    ftdi_tx_count += to_copy;
+    if (ftdi_tx_dma_active == 0U) {
+        ftdi_start_dma_locked();
+    }
+    ftdi_tx_unlock();
+
+    if ((ftdi_mode == FTDI_MODE_LOG) && (to_copy < size)) {
+        ftdi_log_dropped += ((uint32_t)size - to_copy);
     }
 
     if (accepted != NULL) {
-        *accepted = size;
+        *accepted = to_copy;
     }
 
     return BOARD_OK;
@@ -401,7 +441,7 @@ uint32_t ftdi_log_dropped_count(void) {
     return ftdi_log_dropped;
 }
 
-void DMA1_Channel4_IRQHandler(void) {
+static void ftdi_dma_process_flags(void) {
     uint32_t isr;
 
     isr = DMA1->ISR;
@@ -421,4 +461,18 @@ void DMA1_Channel4_IRQHandler(void) {
         ftdi_release_inflight();
         ftdi_start_dma_locked();
     }
+}
+
+/*
+ * The vector table in Device/startup_stm32l496zgtx.s names this entry
+ * DMA1_CH4_IRQHandler; the CMSIS-style name is provided as well so the handler
+ * is reached whichever name the startup file uses. Same arrangement as
+ * BSP/QSPI/src/qspi.c for DMA1 channel 5.
+ */
+void DMA1_Channel4_IRQHandler(void) {
+    ftdi_dma_process_flags();
+}
+
+void DMA1_CH4_IRQHandler(void) {
+    ftdi_dma_process_flags();
 }

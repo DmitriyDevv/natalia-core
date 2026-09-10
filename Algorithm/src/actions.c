@@ -806,7 +806,7 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
         return ACTION_ERR_CONTENT;
     }
 
-    result = require_ok(board_usb_is_ready(&is_ready));
+    result = require_ok(board_data_is_ready(&is_ready));
     if (result != ACTION_OK) {
         ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
         return result;
