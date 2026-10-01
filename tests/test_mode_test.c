@@ -89,7 +89,54 @@ static void nerr_saturates_to_24_bit(void) {
     assert(out.nerr[TEST_MODE_BLOCK_COUNT - 1U] == 0x00000001UL);
 }
 
+static void clean_test_resets_progress_and_rebuilds_map(void) {
+    SystemContext ctx;
+    SystemEvent event;
+    MramStoreServiceData service;
+    BoardNandBlockMap map;
+    uint8_t is_valid = 0U;
+    uint32_t guard;
+
+    board_stub_reset_all();
+    init_duty_context(&ctx);
+    system_event_queue_init();
+
+    memset(&service, 0, sizeof(service));
+    assert(mram_store_load_service_data(&service) == BOARD_OK);
+    service.nand2_packet_count = 99U;
+    service.nand2_last_packet_crc = 0x4321U;
+    service.nand2_last_dumped_packet = 5U;
+    assert(mram_store_save_service_data(&service) == BOARD_OK);
+    board_stub_set_nand_factory_bad_block(2U, 1500U);
+
+    memset(&event, 0, sizeof(event));
+    event.type = EVENT_CMD_TEST;
+    event.command.test.bank = NAND_BANK_2;
+    event.command.test.power_after_done = POWER_AFTER_DONE_OFF;
+    assert(system_event_queue_push_back(&event));
+    algorithm_process_events(&ctx);
+    assert(ctx.state == STATE_TEST);
+    assert(board_stub_nand_scan_count(2U) == 1U);
+
+    for (guard = 0U; (guard < 5000U) && (ctx.state == STATE_TEST); ++guard) {
+        algorithm_poll(&ctx);
+        algorithm_process_events(&ctx);
+    }
+    assert(ctx.state == STATE_DUTY);
+
+    memset(&service, 0, sizeof(service));
+    assert(mram_store_load_service_data(&service) == BOARD_OK);
+    assert(service.nand2_packet_count == 0U);
+    assert(service.nand2_last_packet_crc == 0U);
+    assert(service.nand2_last_dumped_packet == 0U);
+
+    assert(board_mram_read_block_map(2U, 2U, &map, &is_valid) == BOARD_OK);
+    assert(is_valid != 0U);
+    assert(((map.bad[1500U / 8U] >> (1500U % 8U)) & 1U) != 0U);
+}
+
 int main(void) {
+    clean_test_resets_progress_and_rebuilds_map();
     clean_test_completes_and_bumps_counter();
     nerr_saturates_to_24_bit();
 

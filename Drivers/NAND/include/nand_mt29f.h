@@ -32,6 +32,16 @@ typedef enum {
     NAND_MT29F_DEBUG_IO_4_LINES = 4
 } NandMt29fDebugIoMode;
 
+typedef enum {
+    NAND_MT29F_FAULT_NONE = 0,
+    NAND_MT29F_FAULT_QSPI = 1,
+    NAND_MT29F_FAULT_WEL_NOT_SET = 2,
+    NAND_MT29F_FAULT_BUSY_NOT_SEEN = 3,
+    NAND_MT29F_FAULT_TIMEOUT = 4,
+    NAND_MT29F_FAULT_ERASE_FAIL = 5,
+    NAND_MT29F_FAULT_PROGRAM_FAIL = 6
+} NandMt29fFault;
+
 BoardStatus nand_mt29f_select_bank(NandMt29fBank bank);
 
 BoardStatus nand_mt29f_init(void);
@@ -54,6 +64,26 @@ BoardStatus nand_mt29f_program_page_dma_start(uint32_t block,
                                               size_t size);
 
 BoardStatus nand_mt29f_program_page_dma_poll(uint8_t* is_done);
+
+BoardStatus nand_mt29f_read_page_at(uint32_t block,
+                                    uint32_t page,
+                                    uint32_t column,
+                                    void* buffer,
+                                    size_t size);
+
+BoardStatus nand_mt29f_program_page_dma_start_at(uint32_t block,
+                                                 uint32_t page,
+                                                 uint32_t column,
+                                                 const void* buffer,
+                                                 size_t size);
+
+uint8_t nand_mt29f_get_last_ecc_status(void);
+
+NandMt29fFault nand_mt29f_get_last_fault(void);
+
+uint8_t nand_mt29f_get_last_fault_status(void);
+
+uint8_t nand_mt29f_last_program_unconfirmed(void);
 
 BoardStatus nand_mt29f_erase_block(uint32_t block);
 

@@ -195,3 +195,128 @@ target_compile_options(test_alarm_monitor PRIVATE
 )
 
 add_test(NAME test_alarm_monitor COMMAND test_alarm_monitor)
+add_executable(test_ni_format
+        test_ni_format.c
+)
+
+target_link_libraries(test_ni_format PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_ni_format PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_ni_format COMMAND test_ni_format)
+
+add_executable(test_ni_stream
+        test_ni_stream.c
+)
+
+target_link_libraries(test_ni_stream PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_ni_stream PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_ni_stream COMMAND test_ni_stream)
+
+add_executable(test_observe_science
+        test_observe_science.c
+)
+
+target_link_libraries(test_observe_science PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_observe_science PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_observe_science COMMAND test_observe_science)
+
+add_executable(test_ped_ring
+        test_ped_ring.c
+        ${CMAKE_SOURCE_DIR}/Drivers/PED_REG/src/ped_reg_ring.c
+)
+
+target_include_directories(test_ped_ring PRIVATE
+        ${CMAKE_SOURCE_DIR}/Drivers/PED_REG/include
+)
+
+target_link_libraries(test_ped_ring PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_ped_ring PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_ped_ring COMMAND test_ped_ring)
+
+add_executable(test_ni_writer
+        test_ni_writer.c
+)
+
+target_link_libraries(test_ni_writer PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_ni_writer PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_ni_writer COMMAND test_ni_writer)
+
+add_executable(test_nand_map
+        test_nand_map.c
+)
+
+target_link_libraries(test_nand_map PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_nand_map PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_nand_map COMMAND test_nand_map)
+
+# nand_storage has no register access, so it is compiled here against a fake
+# nand_mt29f (tests/fake_nand_mt29f.c) instead of the real driver.
+add_executable(test_nand_storage
+        test_nand_storage.c
+        fake_nand_mt29f.c
+        ${CMAKE_SOURCE_DIR}/Drivers/NAND/src/nand_storage.c
+)
+
+target_include_directories(test_nand_storage PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/Drivers/NAND/include
+)
+
+target_link_libraries(test_nand_storage PRIVATE
+        natalia_core_api
+)
+
+target_compile_options(test_nand_storage PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_nand_storage COMMAND test_nand_storage)

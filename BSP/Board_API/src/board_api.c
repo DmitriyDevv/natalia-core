@@ -7,10 +7,20 @@
 #include "board_startup_io.h"
 #include "gpio.h"
 #include "rtc.h"
+#include "timebase.h"
 
 #if defined(NATALIA_ENABLE_NAND_DRIVER)
 #include "nand_storage.h"
 #include "qspi.h"
+#endif
+
+#if defined(NATALIA_ENABLE_NAND_DRIVER)
+_Static_assert(sizeof(BoardNandBlockMap) == sizeof(NandStorageBlockMap),
+               "Board_API and NAND storage block maps must match");
+_Static_assert(BOARD_NAND_PACKETS_PER_BLOCK == NAND_STORAGE_PACKETS_PER_BLOCK,
+               "Board_API and NAND storage packets per block must match");
+_Static_assert(BOARD_NAND_BLOCK_COUNT == NAND_MT29F_BLOCKS_PER_LUN,
+               "Board_API and NAND block counts must match");
 #endif
 #if defined(NATALIA_ENABLE_USB_DEVICE_DRIVER) && (NATALIA_ENABLE_USB_DEVICE_DRIVER != 0) && \
 (!defined(NATALIA_ENABLE_BOARD_TEST_HOOKS) || (NATALIA_ENABLE_BOARD_TEST_HOOKS == 0))
@@ -39,23 +49,23 @@
 #include "unican.h"
 #endif
 
-#ifndef NATALIA_NAND_PS_OFF_LEVEL
-#define NATALIA_NAND_PS_OFF_LEVEL 1
+#ifndef NATALIA_NAND_POWER_SWITCH_ID
+#error "NATALIA_NAND_POWER_SWITCH_ID must be defined (0 = NONE, 1 = FPF2101, 2 = FPF2006)"
 #endif
 
-#ifndef NATALIA_NAND_POWER_CONTROL
-#define NATALIA_NAND_POWER_CONTROL 1
-#endif
-
-#if (NATALIA_NAND_PS_OFF_LEVEL == 1)
+#if (NATALIA_NAND_POWER_SWITCH_ID == 1)
 #define BOARD_NAND_POWER_OFF_LEVEL GPIO_LEVEL_HIGH
 #define BOARD_NAND_POWER_ON_LEVEL GPIO_LEVEL_LOW
-#else
+#elif (NATALIA_NAND_POWER_SWITCH_ID == 2)
 #define BOARD_NAND_POWER_OFF_LEVEL GPIO_LEVEL_LOW
 #define BOARD_NAND_POWER_ON_LEVEL GPIO_LEVEL_HIGH
+#elif (NATALIA_NAND_POWER_SWITCH_ID != 0)
+#error "NATALIA_NAND_POWER_SWITCH_ID must be 0 (NONE), 1 (FPF2101) or 2 (FPF2006)"
 #endif
 
-#define BOARD_NAND_POWER_TIMEOUT 1000000UL
+#define BOARD_NAND_BANK_COUNT 2U
+#define BOARD_NAND_PSON_CHECK_DELAY_MS 50U
+#define BOARD_NAND_POWER_OFF_HOLD_MS 100U
 
 #if defined(NATALIA_ENABLE_MRAM_DRIVER) && (NATALIA_ENABLE_MRAM_DRIVER != 0)
 
@@ -65,6 +75,8 @@
 
 #define BOARD_MRAM_TEST_RESULT1_OFFSET 0x2000U
 #define BOARD_MRAM_TEST_RESULT2_OFFSET 0x4000U
+#define BOARD_MRAM_BLOCK_MAP1_OFFSET 0x6000U
+#define BOARD_MRAM_BLOCK_MAP2_OFFSET 0x6400U
 
 static uint8_t board_mram_region_buffer[BOARD_MRAM_DATA_SIZE];
 
@@ -75,6 +87,8 @@ static uint8_t board_mram_region_buffer[BOARD_MRAM_DATA_SIZE];
 
 static uint8_t board_mram_stub_storage[BOARD_MRAM_COPY_COUNT][BOARD_MRAM_COPY_SIZE];
 static uint8_t board_mram_stub_test_result[BOARD_MRAM_COPY_COUNT][2][BOARD_MRAM_TEST_RESULT_SIZE];
+static BoardNandBlockMap board_mram_stub_block_map[BOARD_MRAM_COPY_COUNT][2];
+static uint8_t board_mram_stub_block_map_valid[BOARD_MRAM_COPY_COUNT][2];
 static uint8_t board_mram_stub_initialized;
 
 #endif
@@ -82,6 +96,11 @@ static uint8_t board_mram_stub_initialized;
 #if defined(NATALIA_ENABLE_NAND_DRIVER)
 static uint8_t board_nand_storage_initialized;
 static uint8_t board_nand_active_bank_id;
+static uint8_t board_nand_power_requested[BOARD_NAND_BANK_COUNT];
+#if (NATALIA_NAND_POWER_SWITCH_ID != 0)
+static uint8_t board_nand_power_off_valid[BOARD_NAND_BANK_COUNT];
+static uint32_t board_nand_power_off_ms[BOARD_NAND_BANK_COUNT];
+#endif
 #endif
 
 #if defined(NATALIA_ENABLE_INA219_DRIVER) && (NATALIA_ENABLE_INA219_DRIVER != 0)
@@ -91,12 +110,36 @@ static uint8_t board_ina219_pu_initialized;
 static uint8_t board_ina219_ped_initialized;
 #endif
 
+#if defined(NATALIA_ENABLE_NAND_DRIVER)
+static void board_nand_power_state_reset(uint8_t switched_off_now) {
+    uint32_t index;
+
+#if (NATALIA_NAND_POWER_SWITCH_ID != 0)
+    (void)gpio_falling_edge_irq_disable(BOARD_PIN_PU_NAND1_PSON);
+    (void)gpio_falling_edge_irq_disable(BOARD_PIN_PU_NAND2_PSON);
+#endif
+
+    for (index = 0U; index < BOARD_NAND_BANK_COUNT; ++index) {
+        board_nand_power_requested[index] = 0U;
+#if (NATALIA_NAND_POWER_SWITCH_ID != 0)
+        board_nand_power_off_valid[index] = switched_off_now;
+        board_nand_power_off_ms[index] = timebase_millis();
+#endif
+    }
+
+#if (NATALIA_NAND_POWER_SWITCH_ID == 0)
+    (void)switched_off_now;
+#endif
+}
+#endif
+
 BoardStatus board_init_hardware(void) {
     BoardStatus status;
 
 #if defined(NATALIA_ENABLE_NAND_DRIVER)
     board_nand_storage_initialized = 0U;
     board_nand_active_bank_id = 0U;
+    board_nand_power_state_reset(0U);
 #endif
 
 #if defined(NATALIA_ENABLE_INA219_DRIVER) && (NATALIA_ENABLE_INA219_DRIVER != 0)
@@ -166,6 +209,7 @@ BoardStatus board_enter_safe_config(void) {
 #if defined(NATALIA_ENABLE_NAND_DRIVER)
     board_nand_storage_initialized = 0U;
     board_nand_active_bank_id = 0U;
+    board_nand_power_state_reset(1U);
 #endif
 
 #if defined(NATALIA_ENABLE_INA219_DRIVER) && (NATALIA_ENABLE_INA219_DRIVER != 0)
@@ -451,6 +495,90 @@ BoardStatus board_mram_read_test_result(uint8_t copy_id,
     return BOARD_OK;
 }
 
+static BoardStatus board_mram_block_map_offset(uint8_t nand_bank, uint32_t* offset) {
+    if (nand_bank == 1U) {
+        *offset = BOARD_MRAM_BLOCK_MAP1_OFFSET;
+        return BOARD_OK;
+    }
+    if (nand_bank == 2U) {
+        *offset = BOARD_MRAM_BLOCK_MAP2_OFFSET;
+        return BOARD_OK;
+    }
+    return BOARD_ERR_INVALID_ARG;
+}
+
+BoardStatus board_mram_write_block_map(uint8_t copy_id, uint8_t nand_bank, const BoardNandBlockMap* map) {
+    MramBank bank;
+    uint32_t offset;
+    uint16_t crc;
+    uint8_t crc_bytes[2];
+    BoardStatus status;
+
+    if (map == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = board_mram_copy_to_bank(copy_id, &bank);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = board_mram_block_map_offset(nand_bank, &offset);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = mram_write(bank, offset, map, sizeof(*map));
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    crc = crc16_ccitt(map, sizeof(*map));
+    crc_bytes[0] = (uint8_t)(crc & 0xFFU);
+    crc_bytes[1] = (uint8_t)((crc >> 8) & 0xFFU);
+
+    return mram_write(bank, offset + (uint32_t)sizeof(*map), crc_bytes, sizeof(crc_bytes));
+}
+
+BoardStatus board_mram_read_block_map(uint8_t copy_id, uint8_t nand_bank, BoardNandBlockMap* map, uint8_t* is_valid) {
+    MramBank bank;
+    uint32_t offset;
+    uint16_t stored_crc;
+    uint8_t crc_bytes[2];
+    BoardStatus status;
+
+    if ((map == 0) || (is_valid == 0)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *is_valid = 0U;
+
+    status = board_mram_copy_to_bank(copy_id, &bank);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = board_mram_block_map_offset(nand_bank, &offset);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = mram_read(bank, offset, map, sizeof(*map));
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = mram_read(bank, offset + (uint32_t)sizeof(*map), crc_bytes, sizeof(crc_bytes));
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    stored_crc = (uint16_t)((uint16_t)crc_bytes[0] | ((uint16_t)crc_bytes[1] << 8));
+    *is_valid = (crc16_ccitt(map, sizeof(*map)) == stored_crc) ? 1U : 0U;
+
+    return BOARD_OK;
+}
+
 #else
 
 static BoardStatus board_mram_stub_check_range(uint8_t copy_id,
@@ -639,8 +767,34 @@ BoardStatus board_mram_read_test_result(uint8_t copy_id,
     return BOARD_OK;
 }
 
+
+BoardStatus board_mram_write_block_map(uint8_t copy_id, uint8_t nand_bank, const BoardNandBlockMap* map) {
+    if ((map == 0) || (copy_id == 0U) || (copy_id > BOARD_MRAM_COPY_COUNT) ||
+        ((nand_bank != 1U) && (nand_bank != 2U))) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    board_mram_stub_block_map[copy_id - 1U][nand_bank - 1U] = *map;
+    board_mram_stub_block_map_valid[copy_id - 1U][nand_bank - 1U] = 1U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_mram_read_block_map(uint8_t copy_id, uint8_t nand_bank, BoardNandBlockMap* map, uint8_t* is_valid) {
+    if ((map == 0) || (is_valid == 0) || (copy_id == 0U) || (copy_id > BOARD_MRAM_COPY_COUNT) ||
+        ((nand_bank != 1U) && (nand_bank != 2U))) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *map = board_mram_stub_block_map[copy_id - 1U][nand_bank - 1U];
+    *is_valid = board_mram_stub_block_map_valid[copy_id - 1U][nand_bank - 1U];
+
+    return BOARD_OK;
+}
+
 #endif
 
+#if defined(NATALIA_ENABLE_NAND_DRIVER)
 static BoardStatus board_nand_get_pins(uint8_t bank_id,
                                        BoardPinId* power_pin,
                                        BoardPinId* power_status_pin) {
@@ -662,6 +816,7 @@ static BoardStatus board_nand_get_pins(uint8_t bank_id,
 
     return BOARD_ERR_INVALID_ARG;
 }
+#endif
 
 #if defined(NATALIA_ENABLE_NAND_DRIVER)
 static BoardStatus board_nand_get_storage_bank(uint8_t bank_id,
@@ -713,52 +868,19 @@ static BoardStatus board_nand_require_active(uint8_t bank_id) {
 }
 #endif
 
-static BoardStatus board_nand_wait_power_state(uint8_t bank_id,
-                                               uint8_t expected_powered) {
-    BoardPinId power_pin;
-    BoardPinId power_status_pin;
-    GpioLevel level;
-    uint32_t timeout = BOARD_NAND_POWER_TIMEOUT;
+static BoardStatus board_nand_disconnect_pins(uint8_t bank_id) {
     BoardStatus status;
 
-    status = board_nand_get_pins(bank_id, &power_pin, &power_status_pin);
-    if (status != BOARD_OK) {
-        return status;
-    }
+#if defined(NATALIA_ENABLE_NAND_DRIVER)
+    qspi_invalidate_pins();
+#endif
 
-    (void)power_pin;
-
-    while (timeout > 0U) {
-        status = gpio_read(power_status_pin, &level);
+    if (bank_id == 1U) {
+        status = gpio_set_disconnected(BOARD_PIN_QSPI_BK1_CLK);
         if (status != BOARD_OK) {
             return status;
         }
 
-        if (expected_powered != 0U) {
-            if (level == GPIO_LEVEL_HIGH) {
-                return BOARD_OK;
-            }
-        } else {
-            if (level == GPIO_LEVEL_LOW) {
-                return BOARD_OK;
-            }
-        }
-
-        --timeout;
-    }
-
-    return BOARD_ERR_TIMEOUT;
-}
-
-static BoardStatus board_nand_disconnect_pins(uint8_t bank_id) {
-    BoardStatus status;
-
-    status = gpio_set_disconnected(BOARD_PIN_QSPI_BK2_CLK);
-    if (status != BOARD_OK) {
-        return status;
-    }
-
-    if (bank_id == 1U) {
         status = gpio_set_disconnected(BOARD_PIN_QSPI_BK1_NCS);
         if (status != BOARD_OK) {
             return status;
@@ -783,6 +905,11 @@ static BoardStatus board_nand_disconnect_pins(uint8_t bank_id) {
     }
 
     if (bank_id == 2U) {
+        status = gpio_set_disconnected(BOARD_PIN_QSPI_BK2_CLK);
+        if (status != BOARD_OK) {
+            return status;
+        }
+
         status = gpio_set_disconnected(BOARD_PIN_QSPI_BK2_NCS);
         if (status != BOARD_OK) {
             return status;
@@ -826,30 +953,63 @@ BoardStatus board_nand_power_on(uint8_t bank_id) {
     (void)bank_id;
 
     return BOARD_OK;
-#elif (NATALIA_NAND_POWER_CONTROL == 0)
-    if ((bank_id != 1U) && (bank_id != 2U)) {
-        return BOARD_ERR_INVALID_ARG;
-    }
-
-    return BOARD_OK;
 #else
     BoardPinId power_pin;
     BoardPinId power_status_pin;
     BoardStatus status;
+    uint8_t index;
+#if (NATALIA_NAND_POWER_SWITCH_ID != 0)
+    GpioLevel level;
+    uint32_t elapsed_ms;
+#endif
 
     status = board_nand_get_pins(bank_id, &power_pin, &power_status_pin);
     if (status != BOARD_OK) {
         return status;
     }
 
+    index = (uint8_t)(bank_id - 1U);
+
+#if (NATALIA_NAND_POWER_SWITCH_ID == 0)
+    (void)power_pin;
     (void)power_status_pin;
+#else
+    if ((board_nand_power_requested[index] == 0U) && (board_nand_power_off_valid[index] != 0U)) {
+        elapsed_ms = timebase_millis() - board_nand_power_off_ms[index];
+        if (elapsed_ms < BOARD_NAND_POWER_OFF_HOLD_MS) {
+            timebase_delay_ms_blocking(BOARD_NAND_POWER_OFF_HOLD_MS - elapsed_ms);
+        }
+    }
 
     status = gpio_write(power_pin, BOARD_NAND_POWER_ON_LEVEL);
     if (status != BOARD_OK) {
         return status;
     }
 
-    return board_nand_wait_power_state(bank_id, 1U);
+    timebase_delay_ms_blocking(BOARD_NAND_PSON_CHECK_DELAY_MS);
+
+    status = gpio_read(power_status_pin, &level);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    if (level != GPIO_LEVEL_HIGH) {
+        (void)gpio_write(power_pin, BOARD_NAND_POWER_OFF_LEVEL);
+        board_nand_power_requested[index] = 0U;
+        board_nand_power_off_valid[index] = 1U;
+        board_nand_power_off_ms[index] = timebase_millis();
+        return BOARD_OK;
+    }
+
+    status = gpio_falling_edge_irq_enable(power_status_pin);
+    if (status != BOARD_OK) {
+        return status;
+    }
+#endif
+
+    board_nand_power_requested[index] = 1U;
+
+    return BOARD_OK;
 #endif
 }
 
@@ -858,48 +1018,41 @@ BoardStatus board_nand_power_off(uint8_t bank_id) {
     (void)bank_id;
 
     return BOARD_OK;
-#elif (NATALIA_NAND_POWER_CONTROL == 0)
-    if ((bank_id != 1U) && (bank_id != 2U)) {
-        return BOARD_ERR_INVALID_ARG;
-    }
-
-    (void)board_nand_disconnect(bank_id);
-
-#if defined(NATALIA_ENABLE_NAND_DRIVER)
-    board_nand_storage_initialized = 0U;
-    board_nand_active_bank_id = 0U;
-#endif
-
-    return BOARD_OK;
 #else
     BoardPinId power_pin;
     BoardPinId power_status_pin;
     BoardStatus status;
+    uint8_t index;
 
     status = board_nand_get_pins(bank_id, &power_pin, &power_status_pin);
     if (status != BOARD_OK) {
         return status;
     }
 
-    (void)power_status_pin;
+    index = (uint8_t)(bank_id - 1U);
 
     (void)board_nand_disconnect(bank_id);
+
+#if (NATALIA_NAND_POWER_SWITCH_ID == 0)
+    (void)power_pin;
+    (void)power_status_pin;
+#else
+    (void)gpio_falling_edge_irq_disable(power_status_pin);
 
     status = gpio_write(power_pin, BOARD_NAND_POWER_OFF_LEVEL);
     if (status != BOARD_OK) {
         return status;
     }
 
-    status = board_nand_wait_power_state(bank_id, 0U);
-
-#if defined(NATALIA_ENABLE_NAND_DRIVER)
-    if (status == BOARD_OK) {
-        board_nand_storage_initialized = 0U;
-        board_nand_active_bank_id = 0U;
-    }
+    board_nand_power_off_valid[index] = 1U;
+    board_nand_power_off_ms[index] = timebase_millis();
 #endif
 
-    return status;
+    board_nand_power_requested[index] = 0U;
+    board_nand_storage_initialized = 0U;
+    board_nand_active_bank_id = 0U;
+
+    return BOARD_OK;
 #endif
 }
 
@@ -914,23 +1067,14 @@ BoardStatus board_nand_is_powered(uint8_t bank_id, uint8_t* is_powered) {
     *is_powered = 1U;
 
     return BOARD_OK;
-#elif (NATALIA_NAND_POWER_CONTROL == 0)
-    if (is_powered == 0) {
-        return BOARD_ERR_INVALID_ARG;
-    }
-
-    if ((bank_id != 1U) && (bank_id != 2U)) {
-        return BOARD_ERR_INVALID_ARG;
-    }
-
-    *is_powered = 1U;
-
-    return BOARD_OK;
 #else
     BoardPinId power_pin;
     BoardPinId power_status_pin;
-    GpioLevel level;
     BoardStatus status;
+#if (NATALIA_NAND_POWER_SWITCH_ID != 0)
+    GpioLevel switch_level;
+    GpioLevel fault_level;
+#endif
 
     if (is_powered == 0) {
         return BOARD_ERR_INVALID_ARG;
@@ -941,15 +1085,46 @@ BoardStatus board_nand_is_powered(uint8_t bank_id, uint8_t* is_powered) {
         return status;
     }
 
+#if (NATALIA_NAND_POWER_SWITCH_ID == 0)
     (void)power_pin;
+    (void)power_status_pin;
 
-    status = gpio_read(power_status_pin, &level);
+    *is_powered = board_nand_power_requested[bank_id - 1U];
+#else
+    status = gpio_read_output_latch(power_pin, &switch_level);
     if (status != BOARD_OK) {
         return status;
     }
 
-    *is_powered = (level == GPIO_LEVEL_HIGH) ? 1U : 0U;
+    status = gpio_read(power_status_pin, &fault_level);
+    if (status != BOARD_OK) {
+        return status;
+    }
 
+    *is_powered = ((switch_level == BOARD_NAND_POWER_ON_LEVEL) &&
+                   (fault_level == GPIO_LEVEL_HIGH)) ? 1U : 0U;
+#endif
+
+    return BOARD_OK;
+#endif
+}
+
+BoardStatus board_nand_take_power_fault(uint8_t bank_id, uint8_t* fault) {
+    if (fault == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *fault = 0U;
+
+    if ((bank_id != 1U) && (bank_id != 2U)) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+#if defined(NATALIA_ENABLE_NAND_DRIVER) && (NATALIA_NAND_POWER_SWITCH_ID != 0)
+    return gpio_falling_edge_irq_take((bank_id == 1U) ? BOARD_PIN_PU_NAND1_PSON
+                                                      : BOARD_PIN_PU_NAND2_PSON,
+                                      fault);
+#else
     return BOARD_OK;
 #endif
 }
@@ -1368,6 +1543,119 @@ BoardStatus board_nand_erase_is_done(uint8_t bank_id, uint8_t* is_done) {
 #endif
 }
 
+BoardStatus board_nand_bad_block_scan_start(uint8_t bank_id) {
+#if defined(NATALIA_ENABLE_NAND_DRIVER)
+    NandMt29fBank bank;
+    BoardStatus status;
+
+    status = board_nand_require_active(bank_id);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = board_nand_get_storage_bank(bank_id, &bank);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    return nand_storage_scan_start(bank);
+#else
+    (void)bank_id;
+
+    return BOARD_OK;
+#endif
+}
+
+BoardStatus board_nand_bad_block_scan_poll(uint8_t bank_id, uint8_t* is_done) {
+#if defined(NATALIA_ENABLE_NAND_DRIVER)
+    BoardStatus status;
+
+    if (is_done == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = board_nand_require_active(bank_id);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    return nand_storage_scan_poll(is_done);
+#else
+    (void)bank_id;
+
+    if (is_done == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *is_done = 1U;
+
+    return BOARD_OK;
+#endif
+}
+
+BoardStatus board_nand_set_block_map(uint8_t bank_id, const BoardNandBlockMap* map) {
+#if defined(NATALIA_ENABLE_NAND_DRIVER)
+    NandStorageBlockMap storage_map;
+    NandMt29fBank bank;
+    BoardStatus status;
+
+    if (map == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = board_nand_get_storage_bank(bank_id, &bank);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    (void)memcpy(storage_map.bad, map->bad, sizeof(storage_map.bad));
+    (void)memcpy(storage_map.candidate, map->candidate, sizeof(storage_map.candidate));
+
+    return nand_storage_set_block_map(bank, &storage_map);
+#else
+    (void)bank_id;
+
+    return (map == 0) ? BOARD_ERR_INVALID_ARG : BOARD_OK;
+#endif
+}
+
+BoardStatus board_nand_get_block_map(uint8_t bank_id, BoardNandBlockMap* map) {
+#if defined(NATALIA_ENABLE_NAND_DRIVER)
+    NandStorageBlockMap storage_map;
+    NandMt29fBank bank;
+    BoardStatus status;
+
+    if (map == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = board_nand_get_storage_bank(bank_id, &bank);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = nand_storage_get_block_map(bank, &storage_map);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    (void)memcpy(map->bad, storage_map.bad, sizeof(map->bad));
+    (void)memcpy(map->candidate, storage_map.candidate, sizeof(map->candidate));
+
+    return BOARD_OK;
+#else
+    (void)bank_id;
+
+    if (map == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    memset(map, 0, sizeof(*map));
+
+    return BOARD_OK;
+#endif
+}
+
 BoardStatus board_nand_is_full(uint8_t bank_id, uint8_t* is_full) {
 #if defined(NATALIA_ENABLE_NAND_DRIVER)
     BoardStatus status;
@@ -1492,6 +1780,51 @@ BoardStatus board_ped_take_trigger_events(uint32_t* event_count) {
     return BOARD_OK;
 }
 
+BoardStatus board_ped_acquisition_start(void) {
+    return BOARD_ERR_UNSUPPORTED;
+}
+
+BoardStatus board_ped_acquisition_stop(void) {
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_take_records(BoardPedRecord* records, size_t capacity, size_t* count) {
+    if ((count == 0) || ((records == 0) && (capacity > 0U))) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *count = 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_write_register(uint8_t address, uint16_t value) {
+    (void)address;
+    (void)value;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_take_faults(uint32_t* faults) {
+    if (faults == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *faults = 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_get_stats(BoardPedStats* stats) {
+    if (stats == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    memset(stats, 0, sizeof(*stats));
+
+    return BOARD_OK;
+}
+
 #elif defined(NATALIA_ENABLE_PED_REG_DRIVER) && (NATALIA_ENABLE_PED_REG_DRIVER != 0)
 
 BoardStatus board_ped_power_on(void) {
@@ -1552,6 +1885,113 @@ BoardStatus board_ped_take_trigger_events(uint32_t* event_count) {
     }
 
     *event_count = (pending != 0U) ? 1U : 0U;
+
+    return BOARD_OK;
+}
+
+#define BOARD_PED_TAKE_CHUNK 32U
+
+BoardStatus board_ped_acquisition_start(void) {
+    return ped_reg_acquisition_start();
+}
+
+BoardStatus board_ped_acquisition_stop(void) {
+    return ped_reg_acquisition_stop();
+}
+
+BoardStatus board_ped_take_records(BoardPedRecord* records, size_t capacity, size_t* count) {
+    PedRegRecord chunk[BOARD_PED_TAKE_CHUNK];
+    size_t total = 0U;
+    size_t request;
+    size_t taken;
+    size_t i;
+    size_t word;
+    BoardStatus status;
+
+    if ((count == 0) || ((records == 0) && (capacity > 0U))) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *count = 0U;
+
+    do {
+        request = capacity - total;
+        if (request > BOARD_PED_TAKE_CHUNK) {
+            request = BOARD_PED_TAKE_CHUNK;
+        }
+
+        status = ped_reg_take_records(chunk, request, &taken);
+        if (status != BOARD_OK) {
+            return status;
+        }
+
+        for (i = 0U; i < taken; ++i) {
+            records[total + i].kind = chunk[i].kind;
+            records[total + i].flags = chunk[i].flags;
+            for (word = 0U; word < BOARD_PED_RECORD_DATA_WORDS; ++word) {
+                records[total + i].data[word] = chunk[i].data[word];
+            }
+            records[total + i].rtc_seconds = chunk[i].rtc_seconds;
+        }
+
+        total += taken;
+    } while ((taken == request) && (total < capacity));
+
+    *count = total;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_write_register(uint8_t address, uint16_t value) {
+    return ped_reg_write_register(address, value);
+}
+
+BoardStatus board_ped_take_faults(uint32_t* faults) {
+    uint32_t driver_faults = 0U;
+    BoardStatus status;
+
+    if (faults == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = ped_reg_take_faults(&driver_faults);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    *faults = 0U;
+    if ((driver_faults & PED_REG_FAULT_POWER) != 0U) {
+        *faults |= BOARD_PED_FAULT_POWER;
+    }
+    if ((driver_faults & PED_REG_FAULT_READY) != 0U) {
+        *faults |= BOARD_PED_FAULT_READY;
+    }
+    if ((driver_faults & PED_REG_FAULT_STATUS) != 0U) {
+        *faults |= BOARD_PED_FAULT_STATUS;
+    }
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_get_stats(BoardPedStats* stats) {
+    PedRegStats driver_stats;
+    BoardStatus status;
+
+    if (stats == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = ped_reg_get_stats(&driver_stats);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    stats->events_read = driver_stats.events_read;
+    stats->events_held = driver_stats.events_held;
+    stats->seconds_marked = driver_stats.seconds_marked;
+    stats->seconds_lost = driver_stats.seconds_lost;
+    stats->ring_count = driver_stats.ring_count;
+    stats->ring_high_water = driver_stats.ring_high_water;
 
     return BOARD_OK;
 }
@@ -1634,6 +2074,51 @@ BoardStatus board_ped_take_trigger_events(uint32_t* event_count) {
     }
 
     *event_count = 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_acquisition_start(void) {
+    return BOARD_ERR_UNSUPPORTED;
+}
+
+BoardStatus board_ped_acquisition_stop(void) {
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_take_records(BoardPedRecord* records, size_t capacity, size_t* count) {
+    if ((count == 0) || ((records == 0) && (capacity > 0U))) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *count = 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_write_register(uint8_t address, uint16_t value) {
+    (void)address;
+    (void)value;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_take_faults(uint32_t* faults) {
+    if (faults == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *faults = 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_get_stats(BoardPedStats* stats) {
+    if (stats == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    memset(stats, 0, sizeof(*stats));
 
     return BOARD_OK;
 }

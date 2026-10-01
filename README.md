@@ -215,7 +215,7 @@ cmake --build cmake-build-debug --target natalia_firmware -j 18
 
 | Флаг                                | Назначение                                                          |
 | --------------------------------------- | ----------------------------------------------------------------------------- |
-| `NATALIA_NAND_POWER_SWITCH` (`FPF2101`) | Ключ питания NAND:`FPF2101` (OFF=HIGH) или `FPF2006` (OFF=LOW). |
+| `NATALIA_NAND_POWER_SWITCH` (`FPF2101`) | Ключ питания NAND: `FPF2101` (вход ON активен низким, OFF=HIGH), `FPF2006` (активен высоким, OFF=LOW) или `NONE` — стенд без ключа: выводы `PU_NANDx_PS`/`PSON` не используются, банк считается включённым по программному признаку. С ключом включение идёт по документу «Порядок работы с интерфейсами»: PS вкл. → 50 мс → `PSON` (FLAGB, флаг аварии, вход с подтяжкой вверх); `PSON`=LOW — ключ выключается и `board_nand_is_powered` даёт 0 (→ `ALARM_NAND_PS`). Повторное включение не раньше 100 мс после выключения. |
 | `NATALIA_QSPI_TARGET_HZ` (`40000000`)   | Тактовая QSPI для NAND.                                            |
 | `NATALIA_QSPI_DMA_READ/WRITE` (ON)      | DMA для чтения/записи NAND.                                    |
 | `NATALIA_SPI_DMA_READ/WRITE` (ON)       | DMA для чтения/записи MRAM.                                    |

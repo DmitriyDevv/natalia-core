@@ -113,21 +113,29 @@ static void fixed_count_dump_completes_to_duty(void) {
     assert((board_nand_is_powered(1U, &powered) == BOARD_OK) && (powered == 0U));
 }
 
-/* Dump-all resolves the actual accumulated packet count from NAND and outputs
- * exactly that many packets; power_after_done = KEEP leaves the bank powered. */
+/* Dump-all takes the accumulated packet count from the MRAM service data (the
+ * NAND driver's own counter does not survive a reboot) and outputs exactly that
+ * many packets; power_after_done = KEEP leaves the bank powered. */
 static void dump_all_outputs_committed_packets(void) {
     SystemContext ctx;
     static uint8_t packet[DUMP_MODE_PACKET_SIZE];
+    MramStoreServiceData service_data;
     uint8_t powered = 0U;
     uint32_t i;
 
     begin_test(&ctx, STATE_DUTY);
 
-    assert(board_nand_erase_start(1U) == BOARD_OK); /* reset committed count */
+    assert(board_nand_erase_start(1U) == BOARD_OK);
     memset(packet, 0x5AU, sizeof(packet));
     for (i = 0U; i < 3U; ++i) {
         assert(board_nand_write_packet(1U, packet) == BOARD_OK);
     }
+    assert(board_nand_open_write(1U, 0U) == BOARD_OK); /* driver counter lost, as after a reboot */
+
+    memset(&service_data, 0, sizeof(service_data));
+    assert(mram_store_load_service_data(&service_data) == BOARD_OK);
+    service_data.nand1_packet_count = 3U;
+    assert(mram_store_save_service_data(&service_data) == BOARD_OK);
 
     enqueue_dump(NAND_BANK_1, POWER_AFTER_DONE_KEEP, true, 0U);
     algorithm_process_events(&ctx);

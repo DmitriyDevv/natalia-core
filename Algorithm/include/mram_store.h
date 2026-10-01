@@ -63,6 +63,8 @@ typedef struct {
     uint16_t nand2_test_count;
     uint32_t nand1_last_dumped_packet;
     uint32_t nand2_last_dumped_packet;
+    uint16_t nand1_last_packet_crc;
+    uint16_t nand2_last_packet_crc;
 } MramStoreServiceData;
 
 typedef struct {
@@ -92,5 +94,9 @@ BoardStatus mram_store_save_service_data(const MramStoreServiceData *service_dat
 BoardStatus mram_store_save_test_result(const MramStoreTestResult *test_result);
 
 BoardStatus mram_store_load_test_result(uint8_t bank, MramStoreTestResult *test_result);
+
+BoardStatus mram_store_load_block_map(uint8_t bank, BoardNandBlockMap *map, uint8_t *is_valid);
+
+BoardStatus mram_store_save_block_map(uint8_t bank, const BoardNandBlockMap *map);
 
 #endif // NATALIA_CORE_MRAM_STORE_H

@@ -10,6 +10,10 @@ _Static_assert(TEST_MODE_NERR_BYTE_SIZE == BOARD_MRAM_TEST_RESULT_SIZE,
                "Nerr packed size must match the Board_API test-result region");
 
 static uint8_t mram_store_nerr_buffer[TEST_MODE_NERR_BYTE_SIZE];
+static BoardNandBlockMap mram_store_block_map_copy;
+
+_Static_assert((MRAM_SERVICE_DATA_OFFSET + sizeof(MramStoreServiceData)) <= (1024U - 2U),
+               "Service data must fit the MRAM configuration region");
 
 static void pack_nerr(const uint32_t *nerr, uint8_t *out) {
     uint32_t i;
@@ -280,4 +284,57 @@ BoardStatus mram_store_load_test_result(uint8_t bank, MramStoreTestResult *test_
     test_result->bank = bank;
 
     return BOARD_OK;
+}
+
+BoardStatus mram_store_load_block_map(uint8_t bank, BoardNandBlockMap *map, uint8_t *is_valid) {
+    uint8_t valid1 = 0U;
+    uint8_t valid2 = 0U;
+    BoardStatus status;
+
+    if ((map == 0) || (is_valid == 0) || ((bank != 1U) && (bank != 2U))) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *is_valid = 0U;
+
+    status = board_mram_read_block_map(MRAM_COPY_1, bank, map, &valid1);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = board_mram_read_block_map(MRAM_COPY_2, bank, &mram_store_block_map_copy, &valid2);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    if (valid1 != 0U) {
+        if (valid2 == 0U) {
+            (void)board_mram_write_block_map(MRAM_COPY_2, bank, map);
+        }
+        *is_valid = 1U;
+        return BOARD_OK;
+    }
+
+    if (valid2 != 0U) {
+        *map = mram_store_block_map_copy;
+        (void)board_mram_write_block_map(MRAM_COPY_1, bank, map);
+        *is_valid = 1U;
+    }
+
+    return BOARD_OK;
+}
+
+BoardStatus mram_store_save_block_map(uint8_t bank, const BoardNandBlockMap *map) {
+    BoardStatus status;
+
+    if ((map == 0) || ((bank != 1U) && (bank != 2U))) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    status = board_mram_write_block_map(MRAM_COPY_1, bank, map);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    return board_mram_write_block_map(MRAM_COPY_2, bank, map);
 }

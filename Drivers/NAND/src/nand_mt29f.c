@@ -4,6 +4,7 @@
 
 #include "nand_mt29f_private.h"
 #include "qspi.h"
+#include "timebase.h"
 
 typedef enum {
     NAND_PROGRAM_DMA_IDLE = 0,
@@ -15,6 +16,10 @@ static NandProgramDmaState nand_program_dma_state = NAND_PROGRAM_DMA_IDLE;
 static uint8_t nand_program_dma_status_value = 0U;
 static uint32_t nand_program_dma_row_address = 0U;
 static uint32_t nand_program_dma_timeout = 0U;
+static uint8_t nand_last_ecc_status = 0U;
+static uint8_t nand_program_dma_busy_seen = 0U;
+static uint8_t nand_program_dma_unconfirmed = 0U;
+static uint32_t nand_program_dma_execute_cycles = 0U;
 
 static uint32_t make_row_address(uint32_t block, uint32_t page) {
     return (block * NAND_MT29F_PAGES_PER_BLOCK) + page;
@@ -74,6 +79,18 @@ static BoardStatus validate_dma_page_access(uint32_t block,
     }
 
     if ((size & 3UL) != 0UL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    return BOARD_OK;
+}
+
+static BoardStatus validate_column(uint32_t column, size_t size) {
+    if (column > NAND_MT29F_PAGE_SIZE) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (size > (size_t)(NAND_MT29F_PAGE_SIZE - column)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -154,21 +171,12 @@ BoardStatus nand_mt29f_set_ecc(uint8_t enabled) {
     return nand_mt29f_set_feature(NAND_REG_CONFIGURATION, configuration);
 }
 
-BoardStatus nand_mt29f_init(void) {
+static BoardStatus nand_mt29f_write_features(void) {
     uint8_t configuration;
+    uint8_t readback;
     BoardStatus status;
 
-    status = nand_mt29f_reset();
-    if (status != BOARD_OK) {
-        return status;
-    }
-
-    status = nand_mt29f_wait_ready(0);
-    if (status != BOARD_OK) {
-        return status;
-    }
-
-    status = nand_mt29f_set_feature(NAND_REG_BLOCK_LOCK, 0x02U);
+    status = nand_mt29f_set_feature(NAND_REG_BLOCK_LOCK, NAND_BLOCK_LOCK_UNLOCKED);
     if (status != BOARD_OK) {
         return status;
     }
@@ -182,7 +190,49 @@ BoardStatus nand_mt29f_init(void) {
     configuration &= (uint8_t)~NAND_CONFIGURATION_DRIVER_STRENGTH_MASK;
     configuration |= NAND_CONFIGURATION_ECC_ENABLE;
 
-    return nand_mt29f_set_feature(NAND_REG_CONFIGURATION, configuration);
+    status = nand_mt29f_set_feature(NAND_REG_CONFIGURATION, configuration);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = nand_mt29f_get_feature(NAND_REG_BLOCK_LOCK, &readback);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    if (readback != NAND_BLOCK_LOCK_UNLOCKED) {
+        return BOARD_ERR_IO;
+    }
+
+    status = nand_mt29f_get_feature(NAND_REG_CONFIGURATION, &readback);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    return (readback == configuration) ? BOARD_OK : BOARD_ERR_IO;
+}
+
+BoardStatus nand_mt29f_init(void) {
+    uint32_t attempt;
+    BoardStatus status;
+
+    status = nand_mt29f_reset();
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = nand_mt29f_wait_ready(0);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = BOARD_ERR_IO;
+
+    for (attempt = 0U; (attempt < NAND_INIT_ATTEMPTS) && (status != BOARD_OK); ++attempt) {
+        status = nand_mt29f_write_features();
+    }
+
+    return status;
 }
 
 BoardStatus nand_mt29f_erase_block(uint32_t block) {
@@ -198,25 +248,27 @@ BoardStatus nand_mt29f_erase_block(uint32_t block) {
 
     row_address = block * NAND_MT29F_PAGES_PER_BLOCK;
 
+    nand_mt29f_clear_fault();
+
     status = nand_mt29f_write_enable();
     if (status != BOARD_OK) {
-        return status;
+        return nand_mt29f_record_fault(NAND_MT29F_FAULT_QSPI, 0U, status);
     }
 
     command = nand_mt29f_make_block_erase_command(row_address);
 
     status = qspi_command_no_data(&command);
     if (status != BOARD_OK) {
-        return status;
+        return nand_mt29f_record_fault(NAND_MT29F_FAULT_QSPI, 0U, status);
     }
 
-    status = nand_mt29f_wait_ready(&status_value);
+    status = nand_mt29f_wait_busy_then_ready(&status_value);
     if (status != BOARD_OK) {
         return status;
     }
 
     if ((status_value & NAND_STATUS_ERASE_FAIL) != 0U) {
-        return BOARD_ERR_IO;
+        return nand_mt29f_record_fault(NAND_MT29F_FAULT_ERASE_FAIL, status_value, BOARD_ERR_IO);
     }
 
     return BOARD_OK;
@@ -242,32 +294,34 @@ BoardStatus nand_mt29f_program_page(uint32_t block,
 
     row_address = make_row_address(block, page);
 
+    nand_mt29f_clear_fault();
+
     status = nand_mt29f_write_enable();
     if (status != BOARD_OK) {
-        return status;
+        return nand_mt29f_record_fault(NAND_MT29F_FAULT_QSPI, 0U, status);
     }
 
     command = nand_mt29f_make_program_load_command(0U);
 
     status = qspi_write(&command, buffer, size);
     if (status != BOARD_OK) {
-        return status;
+        return nand_mt29f_record_fault(NAND_MT29F_FAULT_QSPI, 0U, status);
     }
 
     command = nand_mt29f_make_program_execute_command(row_address);
 
     status = qspi_command_no_data(&command);
     if (status != BOARD_OK) {
-        return status;
+        return nand_mt29f_record_fault(NAND_MT29F_FAULT_QSPI, 0U, status);
     }
 
-    status = nand_mt29f_wait_ready(&status_value);
+    status = nand_mt29f_wait_busy_then_ready(&status_value);
     if (status != BOARD_OK) {
         return status;
     }
 
     if ((status_value & NAND_STATUS_PROGRAM_FAIL) != 0U) {
-        return BOARD_ERR_IO;
+        return nand_mt29f_record_fault(NAND_MT29F_FAULT_PROGRAM_FAIL, status_value, BOARD_ERR_IO);
     }
 
     return BOARD_OK;
@@ -277,11 +331,25 @@ BoardStatus nand_mt29f_read_page(uint32_t block,
                                  uint32_t page,
                                  void* buffer,
                                  size_t size) {
+    return nand_mt29f_read_page_at(block, page, 0U, buffer, size);
+}
+
+BoardStatus nand_mt29f_read_page_at(uint32_t block,
+                                    uint32_t page,
+                                    uint32_t column,
+                                    void* buffer,
+                                    size_t size) {
     QspiCommand command;
     BoardStatus status;
     uint32_t row_address;
+    uint8_t status_value = 0U;
 
     status = validate_page_access(block, page, buffer, size);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = validate_column(column, size);
     if (status != BOARD_OK) {
         return status;
     }
@@ -299,14 +367,24 @@ BoardStatus nand_mt29f_read_page(uint32_t block,
         return status;
     }
 
-    status = nand_mt29f_wait_ready(0);
+    status = nand_mt29f_wait_ready(&status_value);
     if (status != BOARD_OK) {
         return status;
     }
 
-    command = nand_mt29f_make_read_cache_command(0U);
+    nand_last_ecc_status = (uint8_t)((status_value & NAND_STATUS_ECC_MASK) >> NAND_STATUS_ECC_SHIFT);
+
+    command = nand_mt29f_make_read_cache_command(column);
 
     return qspi_read(&command, buffer, size);
+}
+
+uint8_t nand_mt29f_get_last_ecc_status(void) {
+    return nand_last_ecc_status;
+}
+
+uint8_t nand_mt29f_last_program_unconfirmed(void) {
+    return nand_program_dma_unconfirmed;
 }
 
 BoardStatus nand_mt29f_is_block_bad(uint32_t block, uint8_t* is_bad) {
@@ -354,6 +432,14 @@ BoardStatus nand_mt29f_program_page_dma_start(uint32_t block,
                                               uint32_t page,
                                               const void* buffer,
                                               size_t size) {
+    return nand_mt29f_program_page_dma_start_at(block, page, 0U, buffer, size);
+}
+
+BoardStatus nand_mt29f_program_page_dma_start_at(uint32_t block,
+                                                 uint32_t page,
+                                                 uint32_t column,
+                                                 const void* buffer,
+                                                 size_t size) {
     QspiCommand command;
     BoardStatus status;
 
@@ -366,6 +452,11 @@ BoardStatus nand_mt29f_program_page_dma_start(uint32_t block,
         return status;
     }
 
+    status = validate_column(column, size);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
     if (size == 0U) {
         return BOARD_OK;
     }
@@ -373,18 +464,21 @@ BoardStatus nand_mt29f_program_page_dma_start(uint32_t block,
     nand_program_dma_row_address = make_row_address(block, page);
     nand_program_dma_status_value = 0U;
     nand_program_dma_timeout = NAND_TIMEOUT_LOOPS;
+    nand_program_dma_unconfirmed = 0U;
+
+    nand_mt29f_clear_fault();
 
     status = nand_mt29f_write_enable();
     if (status != BOARD_OK) {
-        return status;
+        return nand_mt29f_record_fault(NAND_MT29F_FAULT_QSPI, 0U, status);
     }
 
-    command = nand_mt29f_make_program_load_command(0U);
+    command = nand_mt29f_make_program_load_command(column);
 
     status = qspi_write_dma_start(&command, buffer, size);
     if (status != BOARD_OK) {
         nand_program_dma_state = NAND_PROGRAM_DMA_IDLE;
-        return status;
+        return nand_mt29f_record_fault(NAND_MT29F_FAULT_QSPI, 0U, status);
     }
 
     nand_program_dma_state = NAND_PROGRAM_DMA_LOAD;
@@ -397,6 +491,7 @@ BoardStatus nand_mt29f_program_page_dma_poll(uint8_t* is_done) {
     BoardStatus status;
     uint8_t qspi_done = 0U;
     uint8_t nand_ready = 0U;
+    uint32_t elapsed_us;
 
     if (is_done == 0) {
         return BOARD_ERR_INVALID_ARG;
@@ -414,7 +509,7 @@ BoardStatus nand_mt29f_program_page_dma_poll(uint8_t* is_done) {
         if (status != BOARD_OK) {
             nand_program_dma_state = NAND_PROGRAM_DMA_IDLE;
             *is_done = 1U;
-            return status;
+            return nand_mt29f_record_fault(NAND_MT29F_FAULT_QSPI, 0U, status);
         }
 
         if (qspi_done == 0U) {
@@ -427,10 +522,12 @@ BoardStatus nand_mt29f_program_page_dma_poll(uint8_t* is_done) {
         if (status != BOARD_OK) {
             nand_program_dma_state = NAND_PROGRAM_DMA_IDLE;
             *is_done = 1U;
-            return status;
+            return nand_mt29f_record_fault(NAND_MT29F_FAULT_QSPI, 0U, status);
         }
 
+        nand_program_dma_execute_cycles = timebase_cycles();
         nand_program_dma_timeout = NAND_TIMEOUT_LOOPS;
+        nand_program_dma_busy_seen = 0U;
         nand_program_dma_state = NAND_PROGRAM_DMA_WAIT_READY;
 
         return BOARD_OK;
@@ -440,7 +537,9 @@ BoardStatus nand_mt29f_program_page_dma_poll(uint8_t* is_done) {
         if (nand_program_dma_timeout == 0U) {
             nand_program_dma_state = NAND_PROGRAM_DMA_IDLE;
             *is_done = 1U;
-            return BOARD_ERR_TIMEOUT;
+            return nand_mt29f_record_fault(NAND_MT29F_FAULT_TIMEOUT,
+                                           nand_program_dma_status_value,
+                                           BOARD_ERR_TIMEOUT);
         }
 
         status = nand_mt29f_poll_ready_once(&nand_ready,
@@ -448,20 +547,42 @@ BoardStatus nand_mt29f_program_page_dma_poll(uint8_t* is_done) {
         if (status != BOARD_OK) {
             nand_program_dma_state = NAND_PROGRAM_DMA_IDLE;
             *is_done = 1U;
-            return status;
+            return nand_mt29f_record_fault(NAND_MT29F_FAULT_QSPI, 0U, status);
         }
+
+        elapsed_us = timebase_us_since(nand_program_dma_execute_cycles);
 
         --nand_program_dma_timeout;
 
         if (nand_ready == 0U) {
+            nand_program_dma_busy_seen = 1U;
             return BOARD_OK;
+        }
+
+        if (nand_program_dma_busy_seen == 0U) {
+            if (elapsed_us < NAND_BUSY_SETTLE_US) {
+                timebase_delay_us_blocking(NAND_BUSY_CONFIRM_STEP_US);
+                return BOARD_OK;
+            }
+
+            if (elapsed_us < NAND_PROGRAM_MIN_US) {
+                nand_program_dma_state = NAND_PROGRAM_DMA_IDLE;
+                *is_done = 1U;
+                return nand_mt29f_record_fault(NAND_MT29F_FAULT_BUSY_NOT_SEEN,
+                                               nand_program_dma_status_value,
+                                               BOARD_ERR_IO);
+            }
+
+            nand_program_dma_unconfirmed = 1U;
         }
 
         nand_program_dma_state = NAND_PROGRAM_DMA_IDLE;
         *is_done = 1U;
 
         if ((nand_program_dma_status_value & NAND_STATUS_PROGRAM_FAIL) != 0U) {
-            return BOARD_ERR_IO;
+            return nand_mt29f_record_fault(NAND_MT29F_FAULT_PROGRAM_FAIL,
+                                           nand_program_dma_status_value,
+                                           BOARD_ERR_IO);
         }
 
         return BOARD_OK;
@@ -564,7 +685,6 @@ BoardStatus nand_mt29f_debug_read_cache_modes(uint32_t block,
                                      buffer_x4,
                                      size);
 }
-
 
 static QspiIoMode nand_debug_convert_io_mode(NandMt29fDebugIoMode mode) {
     if (mode == NAND_MT29F_DEBUG_IO_NONE) {

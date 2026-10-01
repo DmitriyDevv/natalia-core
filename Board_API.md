@@ -222,6 +222,14 @@ typedef enum { BOARD_TEMP_SENSOR_PU = 0, BOARD_TEMP_SENSOR_PED } BoardTempSensor
 
 Включить / выключить питание банка.
 
+Порядок по документу «Порядок работы с интерфейсами МК STM32L496» (полярность `PU_NANDx_PS` задаёт `NATALIA_NAND_POWER_SWITCH`):
+
+- **Включение:** если с момента выключения банка прошло меньше 100 мс — дождаться; `PU_NANDx_PS` в «включено»; пауза 50 мс; чтение `PU_NANDx_PSON`. `PSON` — это FLAGB ключа FPF2101: выход с открытым стоком, LOW означает аварию (перегрузка по току, просадка входа, перегрев). При `PSON`=LOW ключ сразу выключается, функция возвращает `BOARD_OK`, а авария видна через `board_nand_is_powered` = 0 (Algorithm по нему ставит `ALARM_NAND_PS`).
+- **Выключение:** отключить сигнальные линии банка, `PU_NANDx_PS` в «выключено», `PSON` не читается.
+- **`NATALIA_NAND_POWER_SWITCH=NONE`** (стенд без ключа): выводы PS/PSON не трогаются, функции только меняют программный признак «включено».
+
+После успешного включения на `PU_NANDx_PSON` включается прерывание по спадающему фронту (EXTI1 для банка 1 / PG1, EXTI9_5 для банка 2 / PG6); выключение банка его снимает. Обработчик только защёлкивает флаг — забирается он через `board_nand_take_power_fault`.
+
 | Параметр  | Тип       | Напр. | Описание             |
 | --------- | --------- | ----- | -------------------- |
 | `bank_id` | `uint8_t` | вход  | Банк NAND (1 или 2). |
@@ -230,10 +238,21 @@ typedef enum { BOARD_TEMP_SENSOR_PU = 0, BOARD_TEMP_SENSOR_PED } BoardTempSensor
 
 Подтверждение питания банка.
 
+С ключом: 1, если `PU_NANDx_PS` в состоянии «включено» **и** `PU_NANDx_PSON`=HIGH (аварии нет). При `NATALIA_NAND_POWER_SWITCH=NONE` — программный признак, выставленный `board_nand_power_on` / сброшенный `board_nand_power_off`.
+
 | Параметр     | Тип        | Напр. | Описание               |
 | ------------ | ---------- | ----- | ---------------------- |
 | `bank_id`    | `uint8_t`  | вход  | Банк NAND (1 или 2).   |
 | `is_powered` | `uint8_t*` | выход | 1 — питание подтверждено.|
+
+#### `board_nand_take_power_fault(uint8_t bank_id, uint8_t* fault)`
+
+Забрать и сбросить признак аварии ключа питания банка: `fault` = 1, если с прошлого вызова на `PU_NANDx_PSON` был спадающий фронт (FLAGB FPF2101 — перегрузка по току, просадка входа, перегрев) при включённом банке. Algorithm опрашивает её в каждом проходе `algorithm_collect_hw_events` и при `fault` = 1 ставит `ALARM_NAND_PS` через `alarm_raise`; дальше переход в ALARM (режим 6) отключает линии и выключает ключи (`action_enter_safe_config`). При `NATALIA_NAND_POWER_SWITCH=NONE` и без драйвера NAND всегда `fault` = 0.
+
+| Параметр  | Тип        | Напр. | Описание                              |
+| --------- | ---------- | ----- | ------------------------------------- |
+| `bank_id` | `uint8_t`  | вход  | Банк NAND (1 или 2).                  |
+| `fault`   | `uint8_t*` | выход | 1 — был фронт аварии; признак сброшен. |
 
 #### `board_nand_connect(uint8_t bank_id)` / `board_nand_disconnect(uint8_t bank_id)`
 
@@ -386,6 +405,36 @@ typedef enum { BOARD_TEMP_SENSOR_PU = 0, BOARD_TEMP_SENSOR_PED } BoardTempSensor
 
 ---
 
+## NAND — раскладка и карта плохих блоков
+
+Пакет НИ — 2048 байт, страница NAND — 4096 байт: **два пакета на страницу**,
+каждый пишется своей частичной записью; 128 пакетов на блок, до 262 144 пакетов
+на банк. Пакеты адресуются по порядку хороших блоков, поэтому драйверу нужна
+карта плохих блоков: без неё запись, чтение, стирание и ёмкость возвращают
+`BOARD_ERR_NOT_READY`. Карта сбрасывается при выключении питания банка.
+
+`BoardNandBlockMap` — две битовые карты по 256 байт (бит на блок): `bad` — плохие,
+`candidate` — блоки, на которых была ошибка записи. Кандидаты переходят в `bad`
+только по завершении стирания всего банка, чтобы не сдвигать адреса уже
+записанных пакетов.
+
+#### `board_nand_bad_block_scan_start(uint8_t bank_id)` / `board_nand_bad_block_scan_poll(uint8_t bank_id, uint8_t* is_done)`
+
+Построить карту заново по заводским меткам NAND (16 блоков за вызов). Кандидаты
+сбрасываются.
+
+#### `board_nand_set_block_map(uint8_t bank_id, const BoardNandBlockMap* map)` / `board_nand_get_block_map(uint8_t bank_id, BoardNandBlockMap* map)`
+
+Передать карту драйверу / забрать её (например, после стирания, когда кандидаты
+перешли в `bad`).
+
+#### `board_mram_write_block_map(uint8_t copy_id, uint8_t nand_bank, const BoardNandBlockMap* map)` / `board_mram_read_block_map(uint8_t copy_id, uint8_t nand_bank, BoardNandBlockMap* map, uint8_t* is_valid)`
+
+Хранение карты в MRAM: 512 байт + CRC на банк, `0x6000` (банк 1) и `0x6400`
+(банк 2), в каждой копии отдельно. `is_valid` — совпадение CRC.
+
+---
+
 ## ПЭД (PED_REG)
 
 #### `board_ped_power_on(void)` / `board_ped_power_off(void)`
@@ -459,9 +508,86 @@ typedef enum { BOARD_TEMP_SENSOR_PU = 0, BOARD_TEMP_SENSOR_PED } BoardTempSensor
 | ------------- | ----------- | ----- | --------------------------- |
 | `event_count` | `uint32_t*` | выход | Число накопленных триггеров.|
 
+> `board_ped_write_config`, `board_ped_read_event`, `board_ped_reset_trigger` и
+> `board_ped_take_trigger_events` — старый интерфейс, им пользуется текущий
+> (нефинальный) OBSERVE. Будут удалены вместе с ним. `board_ped_write_config`
+> пишет слово *i* по адресу *i*, а не в `80h`/`81h`; для записи регистров
+> используйте `board_ped_write_register`.
+
+### Сбор данных ПЭД (кольцо записей)
+
+Драйвер сам забирает данные в прерываниях и складывает их в кольцо на 2048
+записей; главный цикл вычитывает их по порядку.
+
+- **Триггер `PED_TG`** (EXTI13, нарастающий фронт): проверка `PED_PSON` и
+  `READY` → чтение 4 регистров события → `TGRES` → запись «событие». Если в
+  кольце нет места под событие, `TGRES` не выдаётся: ПЭД ждёт, а событие
+  дочитывается при следующем `board_ped_take_records`.
+- **Секунда** (EXTI2, нарастающий фронт на PB2 / `RTC_OUT`): чтение 5 счётчиков
+  и времени RTC → запись «секунда». Под секунды в кольце держится резерв
+  8 записей.
+- **Потеря `PED_PSON`** (EXTI14, спад): шина ПЭД переводится в Z, ставится
+  неисправность `BOARD_PED_FAULT_POWER`. Питание не выключается — это решение
+  Algorithm по маске аварий.
+- Любая ошибка шины (`READY`, питание, статус) — неисправность, шина в Z, чтение
+  событий прекращается. Питание драйвер сам не выключает.
+
+`BoardPedRecord`:
+
+| Поле          | Событие (`BOARD_PED_RECORD_EVENT`)                  | Секунда (`BOARD_PED_RECORD_SECOND`)                         |
+| ------------- | --------------------------------------------------- | ----------------------------------------------------------- |
+| `data[0..4]`  | `T_Trig`, `T_PE_Dead`, `Amp_D`, `Trig_Stat`, 0       | `N_D`, `N_AC1`, `N_AC2`, `N_Trig`, `T_S_Dead`                |
+| `rtc_seconds` | 0                                                   | приборное время, округлённое до целой секунды              |
+| `flags`       | 0                                                   | `NO_COUNTERS` — ПЭД не включена или шина неисправна; `NO_TIME` — время не прочитано |
+
+#### `board_ped_acquisition_start(void)` / `board_ped_acquisition_stop(void)`
+
+Старт: очистить кольцо и статистику, включить приём секунд; если шина ПЭД
+активна (после успешного `board_ped_power_on`) — включить приём событий и выдать
+`TGRES`, чтобы сбросить защёлкнутое до старта событие. Стоп: выключить приём
+событий и секунд.
+
+Если прошивка собрана без драйвера ПЭД (`NATALIA_ENABLE_PED_REG_DRIVER=OFF`),
+старт возвращает `BOARD_ERR_UNSUPPORTED`, а остальные функции сбора — «пусто»
+(`BOARD_OK`, ноль записей, ноль неисправностей).
+
+#### `board_ped_take_records(BoardPedRecord* records, size_t capacity, size_t* count)`
+
+Забрать до `capacity` записей в порядке поступления. Если триггер ждал места в
+кольце, дочитывает его и выдаёт `TGRES`.
+
+| Параметр   | Тип               | Напр. | Описание                   |
+| ---------- | ----------------- | ----- | -------------------------- |
+| `records`  | `BoardPedRecord*` | выход | Буфер записей.             |
+| `capacity` | `size_t`          | вход  | Ёмкость буфера, записей.   |
+| `count`    | `size_t*`         | выход | Сколько записей выдано.    |
+
+#### `board_ped_write_register(uint8_t address, uint16_t value)`
+
+Запись одного регистра ПЭД (`Conf_Trig` = `80h`, `Threshold` = `81h`) по
+процедуре записи из «Порядка работы с интерфейсами». На время записи прерывания
+ПЭД запрещены. Несогласованный `READY` — `BOARD_ERR_NOT_READY` и неисправность
+`BOARD_PED_FAULT_READY`.
+
+#### `board_ped_take_faults(uint32_t* faults)`
+
+Забрать накопленные неисправности (маска обнуляется): `BOARD_PED_FAULT_POWER`
+(`ALARM_PED_PS`), `BOARD_PED_FAULT_READY` (`ALARM_PED_DIR`),
+`BOARD_PED_FAULT_STATUS` (`ALARM_PED_ST`).
+
+#### `board_ped_get_stats(BoardPedStats* stats)`
+
+Статистика с последнего старта: прочитано событий, сколько раз триггер ждал
+места, отмечено и потеряно секунд, текущее и максимальное заполнение кольца.
+
 ---
 
 ## RTC (приборное время)
+
+Секунда отсчитывается таймером пробуждения RTC (прерывание `RTC_WKUP`). Тот же
+флаг таймера выводится на `RTC_OUT` (PB2, `OSEL=11`, `RTC_OUT_RMP=1`): раз в
+секунду короткий положительный импульс — фронт в момент срабатывания таймера,
+спад, когда прерывание сбросит флаг. ПЭД и МК считают секунды от одного события.
 
 #### `board_rtc_get_time(InstrumentTime* time)`
 
@@ -821,6 +947,7 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 | --- | --- |
 | `board_nand_power_on` / `_off`, `_connect` / `_disconnect` | Меняют флаги модели, `BOARD_OK`. |
 | `board_nand_is_powered` | Настоящий флаг модели: `1` после `board_nand_power_on`, `0` после `_off`. Изначально `0`. `board_stub_set_nand_powered()` перекрывает флаг отдельно для банка — так моделируется «питание включили, подтверждения нет» (путь `ALARM_NAND_PS`). |
+| `board_nand_take_power_fault` | Отдаёт и сбрасывает признак, поданный `board_stub_set_nand_power_fault(bank)`. Изначально `0`. |
 | `board_nand_read` / `board_nand_write` | Настоящие, с проверкой границ банка. |
 | `board_nand_open_write` | Задаёт стартовый счётчик пакетов; выставляет признак заполнения, если счётчик достиг ёмкости. |
 | `board_nand_write_packet` | Настоящая запись 2048 байт, инкремент счётчика. При заполненном банке — `BOARD_ERR_IO` и признак заполнения. |
@@ -843,6 +970,15 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 | `board_ped_read_status` | `0` |
 | `board_ped_read_event` | `bytes_read = 0` |
 | `board_ped_take_trigger_events` | Отдаёт заданное `board_stub_set_ped_trigger_events()` и обнуляет счётчик; по умолчанию `0`. |
+| `board_nand_bad_block_scan_start` / `_poll` | Карта = заводские плохие блоки, заданные `board_stub_set_nand_factory_bad_block()`; обход мгновенный, число обходов — `board_stub_nand_scan_count()`. |
+| `board_nand_set_block_map` / `_get_block_map` | Хранят карту модели; стирание переносит кандидатов в `bad`. |
+| `board_mram_write_block_map` / `_read_block_map` | Модель MRAM; копию можно «испортить» через `board_stub_set_mram_block_map_valid()`. |
+| `board_nand_write_packet` (отказ) | На пакете, заданном `board_stub_set_nand_write_fail_at()`, возвращает `BOARD_ERR_IO` и помечает блок кандидатом. |
+| `board_ped_take_records` | Отдаёт по порядку записи, положенные `board_stub_push_ped_record()` (до 256). |
+| `board_ped_write_register` | Записывает (адрес, значение) в журнал, читаемый `board_stub_ped_register_write_*`; при `board_stub_set_ped_write_status()` ≠ `BOARD_OK` возвращает этот код и ничего не пишет. |
+| `board_ped_take_faults` | Отдаёт заданное `board_stub_set_ped_faults()` один раз и обнуляет. |
+| `board_ped_acquisition_start` / `_stop` | Меняют признак, читаемый `board_stub_ped_acquisition_active()`. |
+| `board_ped_get_stats` | Нули, кроме `ring_count` — числа ещё не забранных записей. |
 
 ### RTC
 
@@ -893,6 +1029,21 @@ void board_stub_set_digital_temp(BoardTempSensorId sensor, int32_t milli_c, bool
 void board_stub_set_power_monitor(BoardPowerMonitorId monitor, uint32_t mv,
                                   int32_t ua, bool ready);
 void board_stub_set_ped_powered(bool powered);
+
+/* NAND: карта блоков и отказы */
+void     board_stub_set_nand_factory_bad_block(uint8_t bank_id, uint32_t block);
+void     board_stub_set_nand_write_fail_at(uint8_t bank_id, uint32_t packet_index);
+uint32_t board_stub_nand_scan_count(uint8_t bank_id);
+bool     board_stub_nand_map_is_valid(uint8_t bank_id);
+void     board_stub_set_mram_block_map_valid(uint8_t copy_id, uint8_t nand_bank, bool valid);
+
+/* сбор данных ПЭД */
+bool   board_stub_push_ped_record(const BoardPedRecord* record);
+void   board_stub_set_ped_faults(uint32_t faults);
+void   board_stub_set_ped_write_status(BoardStatus status);
+bool   board_stub_ped_acquisition_active(void);
+size_t board_stub_ped_register_write_count(void);
+bool   board_stub_ped_register_write_at(size_t index, uint8_t* address, uint16_t* value);
 void board_stub_set_nand_powered(uint8_t bank_id, bool powered);
 ```
 

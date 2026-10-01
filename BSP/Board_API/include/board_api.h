@@ -69,9 +69,23 @@ BoardStatus board_mram_restore_copy(uint8_t source_copy_id, uint8_t target_copy_
 BoardStatus board_mram_write_test_result(uint8_t copy_id, uint8_t nand_bank, const void* data, size_t size);
 BoardStatus board_mram_read_test_result(uint8_t copy_id, uint8_t nand_bank, void* data, size_t size, uint8_t* is_valid, uint8_t* crc_out);
 
+#define BOARD_NAND_BLOCK_COUNT        2048U
+#define BOARD_NAND_PACKETS_PER_BLOCK  128U
+#define BOARD_NAND_BLOCK_MAP_BYTES    (BOARD_NAND_BLOCK_COUNT / 8U)
+
+typedef struct {
+    uint8_t bad[BOARD_NAND_BLOCK_MAP_BYTES];
+    uint8_t candidate[BOARD_NAND_BLOCK_MAP_BYTES];
+} BoardNandBlockMap;
+
+BoardStatus board_mram_write_block_map(uint8_t copy_id, uint8_t nand_bank, const BoardNandBlockMap* map);
+BoardStatus board_mram_read_block_map(uint8_t copy_id, uint8_t nand_bank, BoardNandBlockMap* map, uint8_t* is_valid);
+
 BoardStatus board_nand_power_on(uint8_t bank_id);
 BoardStatus board_nand_power_off(uint8_t bank_id);
 BoardStatus board_nand_is_powered(uint8_t bank_id, uint8_t* is_powered);
+
+BoardStatus board_nand_take_power_fault(uint8_t bank_id, uint8_t* fault);
 BoardStatus board_nand_connect(uint8_t bank_id);
 BoardStatus board_nand_disconnect(uint8_t bank_id);
 
@@ -94,6 +108,11 @@ BoardStatus board_nand_erase_start(uint8_t bank_id);
 BoardStatus board_nand_erase_is_done(uint8_t bank_id, uint8_t* is_done);
 BoardStatus board_nand_is_full(uint8_t bank_id, uint8_t* is_full);
 
+BoardStatus board_nand_bad_block_scan_start(uint8_t bank_id);
+BoardStatus board_nand_bad_block_scan_poll(uint8_t bank_id, uint8_t* is_done);
+BoardStatus board_nand_set_block_map(uint8_t bank_id, const BoardNandBlockMap* map);
+BoardStatus board_nand_get_block_map(uint8_t bank_id, BoardNandBlockMap* map);
+
 BoardStatus board_ped_power_on(void);
 BoardStatus board_ped_power_off(void);
 BoardStatus board_ped_is_powered(uint8_t* is_powered);
@@ -105,6 +124,39 @@ BoardStatus board_ped_set_inhibit(uint8_t enabled);
 BoardStatus board_ped_set_sleep(uint8_t enabled);
 BoardStatus board_ped_reset_trigger(void);
 BoardStatus board_ped_take_trigger_events(uint32_t* event_count);
+
+#define BOARD_PED_RECORD_EVENT            1U
+#define BOARD_PED_RECORD_SECOND           2U
+#define BOARD_PED_RECORD_DATA_WORDS       5U
+#define BOARD_PED_RECORD_FLAG_NO_COUNTERS 0x01U
+#define BOARD_PED_RECORD_FLAG_NO_TIME     0x02U
+
+#define BOARD_PED_FAULT_POWER             0x01U
+#define BOARD_PED_FAULT_READY             0x02U
+#define BOARD_PED_FAULT_STATUS            0x04U
+
+typedef struct {
+    uint8_t kind;
+    uint8_t flags;
+    uint16_t data[BOARD_PED_RECORD_DATA_WORDS];
+    uint32_t rtc_seconds;
+} BoardPedRecord;
+
+typedef struct {
+    uint32_t events_read;
+    uint32_t events_held;
+    uint32_t seconds_marked;
+    uint32_t seconds_lost;
+    uint32_t ring_count;
+    uint32_t ring_high_water;
+} BoardPedStats;
+
+BoardStatus board_ped_acquisition_start(void);
+BoardStatus board_ped_acquisition_stop(void);
+BoardStatus board_ped_take_records(BoardPedRecord* records, size_t capacity, size_t* count);
+BoardStatus board_ped_write_register(uint8_t address, uint16_t value);
+BoardStatus board_ped_take_faults(uint32_t* faults);
+BoardStatus board_ped_get_stats(BoardPedStats* stats);
 
 BoardStatus board_rtc_get_time(InstrumentTime* time);
 BoardStatus board_rtc_set_time(const InstrumentTime* time);

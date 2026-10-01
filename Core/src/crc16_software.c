@@ -3,7 +3,7 @@
 #define CRC16_CCITT_POLY 0x1021U
 #define CRC16_CCITT_INIT 0xFFFFU
 
-uint16_t crc16_ccitt(const void *data, size_t size) {
+uint16_t crc16_ccitt_software(const void *data, size_t size) {
     const uint8_t *bytes = (const uint8_t *)data;
     uint16_t crc = CRC16_CCITT_INIT;
     size_t i;

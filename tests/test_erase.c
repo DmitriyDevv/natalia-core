@@ -221,7 +221,41 @@ static void telemetry_ignored_in_erase(void) {
     assert(board_comm_stub_tx_count() == 0U);
 }
 
+static void erase_resets_bank_progress_and_saves_map(void) {
+    SystemContext ctx;
+    MramStoreServiceData service;
+    BoardNandBlockMap map;
+    uint8_t is_valid = 0U;
+
+    begin_test(&ctx, STATE_DUTY);
+
+    memset(&service, 0, sizeof(service));
+    assert(mram_store_load_service_data(&service) == BOARD_OK);
+    service.nand1_packet_count = 50U;
+    service.nand1_last_packet_crc = 0x1234U;
+    service.nand1_last_dumped_packet = 10U;
+    service.nand2_packet_count = 7U;
+    assert(mram_store_save_service_data(&service) == BOARD_OK);
+
+    enqueue_erase(NAND_BANK_1, POWER_AFTER_DONE_OFF);
+    algorithm_process_events(&ctx);
+    assert(ctx.state == STATE_ERASE);
+    run_until_duty(&ctx);
+    assert(ctx.state == STATE_DUTY);
+
+    memset(&service, 0, sizeof(service));
+    assert(mram_store_load_service_data(&service) == BOARD_OK);
+    assert(service.nand1_packet_count == 0U);
+    assert(service.nand1_last_packet_crc == 0U);
+    assert(service.nand1_last_dumped_packet == 0U);
+    assert(service.nand2_packet_count == 7U);
+
+    assert(board_mram_read_block_map(1U, 1U, &map, &is_valid) == BOARD_OK);
+    assert(is_valid != 0U);
+}
+
 int main(void) {
+    erase_resets_bank_progress_and_saves_map();
     clean_erase_increments_counter_and_returns_to_duty();
     clean_erase_keeps_power_when_requested();
     early_finish_by_cmd_duty_does_not_count();

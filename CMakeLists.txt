@@ -146,11 +146,7 @@ set(NATALIA_NAND_PROGRAM_LOAD_MODE "4" CACHE STRING
 )
 
 set(NATALIA_NAND_POWER_SWITCH "FPF2101" CACHE STRING
-        "Installed NAND load switch: FPF2101 (enable active-low) or FPF2006 (enable active-high). Determines the PS OFF level automatically."
-)
-
-set(NATALIA_NAND_POWER_CONTROL "ON" CACHE STRING
-        "NAND power control mode: ON uses PS/PSON pins, OFF assumes NAND is externally powered."
+        "Installed NAND load switch: FPF2101 (enable active-low), FPF2006 (enable active-high), or NONE (bench board without a switch: PS/PSON unused)."
 )
 
 set(NATALIA_FIRMWARE_MAIN "main.c" CACHE STRING
@@ -159,19 +155,19 @@ set(NATALIA_FIRMWARE_MAIN "main.c" CACHE STRING
 
 set_property(CACHE NATALIA_NAND_CACHE_READ_MODE PROPERTY STRINGS 1 2 4)
 set_property(CACHE NATALIA_NAND_PROGRAM_LOAD_MODE PROPERTY STRINGS 1 4)
-set_property(CACHE NATALIA_NAND_POWER_CONTROL PROPERTY STRINGS ON OFF)
-set_property(CACHE NATALIA_NAND_POWER_SWITCH PROPERTY STRINGS FPF2101 FPF2006)
+set_property(CACHE NATALIA_NAND_POWER_SWITCH PROPERTY STRINGS FPF2101 FPF2006 NONE)
 
-# Derive the electrical PS OFF level from the installed load switch part.
-# FPF2101: enable is active-low  -> OFF level is HIGH.
-# FPF2006: enable is active-high -> OFF level is LOW.
-if (NATALIA_NAND_POWER_SWITCH STREQUAL "FPF2101")
-    set(NATALIA_NAND_PS_OFF_LEVEL "HIGH")
+# Numeric id passed to C as NATALIA_NAND_POWER_SWITCH_ID:
+# 0 = NONE, 1 = FPF2101 (enable active-low), 2 = FPF2006 (enable active-high).
+if (NATALIA_NAND_POWER_SWITCH STREQUAL "NONE")
+    set(NATALIA_NAND_POWER_SWITCH_ID 0)
+elseif (NATALIA_NAND_POWER_SWITCH STREQUAL "FPF2101")
+    set(NATALIA_NAND_POWER_SWITCH_ID 1)
 elseif (NATALIA_NAND_POWER_SWITCH STREQUAL "FPF2006")
-    set(NATALIA_NAND_PS_OFF_LEVEL "LOW")
+    set(NATALIA_NAND_POWER_SWITCH_ID 2)
 else()
     message(FATAL_ERROR
-            "Set -DNATALIA_NAND_POWER_SWITCH=FPF2101 or FPF2006"
+            "Set -DNATALIA_NAND_POWER_SWITCH=FPF2101, FPF2006 or NONE"
     )
 endif()
 
@@ -239,13 +235,6 @@ endif()
 if (NATALIA_ENABLE_MRAM_DRIVER AND NOT NATALIA_ENABLE_SPI_DRIVER)
     message(FATAL_ERROR
             "NATALIA_ENABLE_MRAM_DRIVER requires NATALIA_ENABLE_SPI_DRIVER=ON"
-    )
-endif()
-
-if (NOT NATALIA_NAND_POWER_CONTROL STREQUAL "ON" AND
-        NOT NATALIA_NAND_POWER_CONTROL STREQUAL "OFF")
-    message(FATAL_ERROR
-            "Set -DNATALIA_NAND_POWER_CONTROL=ON or OFF"
     )
 endif()
 

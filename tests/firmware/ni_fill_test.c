@@ -276,6 +276,22 @@ int main(void) {
         fail("CONNECT", status);
     }
 
+    status = board_nand_bad_block_scan_start((uint8_t)NI_FILL_BANK_ID);
+    if (status != BOARD_OK) {
+        fail("SCAN_START", status);
+    }
+
+    {
+        uint8_t scan_done = 0U;
+
+        while (scan_done == 0U) {
+            status = board_nand_bad_block_scan_poll((uint8_t)NI_FILL_BANK_ID, &scan_done);
+            if (status != BOARD_OK) {
+                fail("SCAN_POLL", status);
+            }
+        }
+    }
+
     log_u32("start_delay_ms", (uint32_t)NI_FILL_START_DELAY_MS);
     timebase_delay_ms_blocking((uint32_t)NI_FILL_START_DELAY_MS);
 

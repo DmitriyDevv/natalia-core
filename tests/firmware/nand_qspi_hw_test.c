@@ -445,8 +445,14 @@ static void send_summary(const char* name,
 }
 
 static void nand_ready(void) {
+    uint8_t scan_done = 0U;
+
     wait_ok(board_nand_power_on(TEST_BANK_ID));
     wait_ok(board_nand_connect(TEST_BANK_ID));
+    wait_ok(board_nand_bad_block_scan_start(TEST_BANK_ID));
+    while (scan_done == 0U) {
+        wait_ok(board_nand_bad_block_scan_poll(TEST_BANK_ID, &scan_done));
+    }
 }
 
 static void run_usb_only(void) {

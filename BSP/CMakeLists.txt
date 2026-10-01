@@ -134,33 +134,9 @@ else()
     )
 endif()
 
-if (NATALIA_NAND_PS_OFF_LEVEL STREQUAL "HIGH")
-    target_compile_definitions(natalia_bsp PRIVATE
-            NATALIA_NAND_PS_OFF_LEVEL=1
-    )
-elseif (NATALIA_NAND_PS_OFF_LEVEL STREQUAL "LOW")
-    target_compile_definitions(natalia_bsp PRIVATE
-            NATALIA_NAND_PS_OFF_LEVEL=0
-    )
-else()
-    message(FATAL_ERROR
-            "Set -DNATALIA_NAND_PS_OFF_LEVEL=HIGH or LOW according to the installed NAND power switch."
-    )
-endif()
-
-if (NATALIA_NAND_POWER_CONTROL STREQUAL "ON")
-    target_compile_definitions(natalia_bsp PRIVATE
-            NATALIA_NAND_POWER_CONTROL=1
-    )
-elseif (NATALIA_NAND_POWER_CONTROL STREQUAL "OFF")
-    target_compile_definitions(natalia_bsp PRIVATE
-            NATALIA_NAND_POWER_CONTROL=0
-    )
-else()
-    message(FATAL_ERROR
-            "Set -DNATALIA_NAND_POWER_CONTROL=ON or OFF."
-    )
-endif()
+target_compile_definitions(natalia_bsp PRIVATE
+        NATALIA_NAND_POWER_SWITCH_ID=${NATALIA_NAND_POWER_SWITCH_ID}
+)
 
 if (NATALIA_LOG_BACKEND STREQUAL "NONE")
     target_compile_definitions(natalia_bsp PUBLIC
@@ -291,25 +267,9 @@ if (NOT NATALIA_USE_BOARD_STUBS)
             natalia_bsp
     )
 
-    if (NATALIA_NAND_PS_OFF_LEVEL STREQUAL "HIGH")
-        target_compile_definitions(natalia_board_api_impl PRIVATE
-                NATALIA_NAND_PS_OFF_LEVEL=1
-        )
-    elseif (NATALIA_NAND_PS_OFF_LEVEL STREQUAL "LOW")
-        target_compile_definitions(natalia_board_api_impl PRIVATE
-                NATALIA_NAND_PS_OFF_LEVEL=0
-        )
-    endif()
-
-    if (NATALIA_NAND_POWER_CONTROL STREQUAL "ON")
-        target_compile_definitions(natalia_board_api_impl PRIVATE
-                NATALIA_NAND_POWER_CONTROL=1
-        )
-    elseif (NATALIA_NAND_POWER_CONTROL STREQUAL "OFF")
-        target_compile_definitions(natalia_board_api_impl PRIVATE
-                NATALIA_NAND_POWER_CONTROL=0
-        )
-    endif()
+    target_compile_definitions(natalia_board_api_impl PRIVATE
+            NATALIA_NAND_POWER_SWITCH_ID=${NATALIA_NAND_POWER_SWITCH_ID}
+    )
 
     if (NATALIA_ENABLE_NAND_DRIVER)
         target_compile_definitions(natalia_board_api_impl PRIVATE

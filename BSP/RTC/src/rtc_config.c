@@ -119,14 +119,13 @@ static BoardStatus rtc_configure_output_pin(void)
     return gpio_configure(BOARD_PIN_RTC_OUT, &rtc_out_config);
 }
 
-static BoardStatus rtc_enable_calibration_output_1hz(void)
+static BoardStatus rtc_enable_wakeup_output_on_pb2(void)
 {
     rtc_disable_write_protection();
 
-
-    RTC->CR &= ~RTC_CR_POL;
-    RTC->CR |= RTC_CR_COSEL;
-    RTC->CR |= RTC_CR_COE;
+    RTC->CR &= ~(RTC_CR_COE | RTC_CR_COSEL | RTC_CR_POL | RTC_CR_OSEL);
+    RTC->CR |= RTC_CR_OSEL;
+    RTC->OR |= RTC_OR_OUT_RMP;
 
     rtc_enable_write_protection();
 
@@ -192,7 +191,7 @@ BoardStatus rtc_configure_hardware(void)
         return status;
     }
 
-    status = rtc_enable_calibration_output_1hz();
+    status = rtc_enable_wakeup_output_on_pb2();
     if (status != BOARD_OK) {
         return status;
     }

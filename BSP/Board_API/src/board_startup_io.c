@@ -7,17 +7,18 @@
 #include "gpio.h"
 #include "log_backend.h"
 
-#ifndef NATALIA_NAND_PS_OFF_LEVEL
-#error "NATALIA_NAND_PS_OFF_LEVEL must be defined as 0 or 1"
+#ifndef NATALIA_NAND_POWER_SWITCH_ID
+#error "NATALIA_NAND_POWER_SWITCH_ID must be defined (0 = NONE, 1 = FPF2101, 2 = FPF2006)"
 #endif
 
-#if ((NATALIA_NAND_PS_OFF_LEVEL != 0) && (NATALIA_NAND_PS_OFF_LEVEL != 1))
-#error "NATALIA_NAND_PS_OFF_LEVEL must be 0 (LOW) or 1 (HIGH)"
+#if ((NATALIA_NAND_POWER_SWITCH_ID != 0) && (NATALIA_NAND_POWER_SWITCH_ID != 1) && \
+     (NATALIA_NAND_POWER_SWITCH_ID != 2))
+#error "NATALIA_NAND_POWER_SWITCH_ID must be 0 (NONE), 1 (FPF2101) or 2 (FPF2006)"
 #endif
 
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
 
-#if (NATALIA_NAND_PS_OFF_LEVEL == 1)
+#if (NATALIA_NAND_POWER_SWITCH_ID == 1)
 #define NAND_POWER_OFF_LEVEL GPIO_LEVEL_HIGH
 #else
 #define NAND_POWER_OFF_LEVEL GPIO_LEVEL_LOW
@@ -53,7 +54,8 @@
 #define BOARD_STARTUP_FTDI_ENABLED 0
 #endif
 
-#if (BOARD_STARTUP_CAN_ENABLED || BOARD_STARTUP_NAND_ENABLED || BOARD_STARTUP_PED_ENABLED)
+#if (BOARD_STARTUP_CAN_ENABLED || BOARD_STARTUP_PED_ENABLED || \
+     (BOARD_STARTUP_NAND_ENABLED && (NATALIA_NAND_POWER_SWITCH_ID != 0)))
 static BoardStatus configure_output(BoardPinId pin_id, GpioLevel level) {
     static const GpioConfig output_low_config = {
         .mode = GPIO_MODE_OUTPUT,
@@ -79,7 +81,7 @@ static BoardStatus configure_output(BoardPinId pin_id, GpioLevel level) {
 }
 #endif
 
-#if (BOARD_STARTUP_CAN_ENABLED || BOARD_STARTUP_NAND_ENABLED || BOARD_STARTUP_USB_ENABLED)
+#if (BOARD_STARTUP_CAN_ENABLED || BOARD_STARTUP_USB_ENABLED)
 static BoardStatus configure_input(BoardPinId pin_id) {
     static const GpioConfig input_no_pull_config = {
         .mode = GPIO_MODE_INPUT,
@@ -119,8 +121,22 @@ static BoardStatus configure_ped_control(void) {
 #endif
 }
 
+#if BOARD_STARTUP_NAND_ENABLED && (NATALIA_NAND_POWER_SWITCH_ID != 0)
+static BoardStatus configure_input_pull_up(BoardPinId pin_id) {
+    static const GpioConfig input_pull_up_config = {
+        .mode = GPIO_MODE_INPUT,
+        .pull = GPIO_PULL_UP,
+        .output_type = GPIO_OUTPUT_PUSH_PULL,
+        .speed = GPIO_SPEED_LOW,
+        .initial_level = GPIO_LEVEL_LOW
+    };
+
+    return gpio_configure(pin_id, &input_pull_up_config);
+}
+#endif
+
 static BoardStatus configure_nand_control(void) {
-#if BOARD_STARTUP_NAND_ENABLED
+#if BOARD_STARTUP_NAND_ENABLED && (NATALIA_NAND_POWER_SWITCH_ID != 0)
     BoardStatus status;
 
     status = configure_output(BOARD_PIN_PU_NAND1_PS, NAND_POWER_OFF_LEVEL);
@@ -133,12 +149,12 @@ static BoardStatus configure_nand_control(void) {
         return status;
     }
 
-    status = configure_input(BOARD_PIN_PU_NAND1_PSON);
+    status = configure_input_pull_up(BOARD_PIN_PU_NAND1_PSON);
     if (status != BOARD_OK) {
         return status;
     }
 
-    return configure_input(BOARD_PIN_PU_NAND2_PSON);
+    return configure_input_pull_up(BOARD_PIN_PU_NAND2_PSON);
 #else
     static const BoardPinId nand_pins[] = {
         BOARD_PIN_PU_NAND1_PS,

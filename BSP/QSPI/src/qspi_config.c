@@ -7,7 +7,7 @@ static const GpioConfig qspi_data_pin_config = {
     .mode = GPIO_MODE_ALTERNATE,
     .pull = GPIO_PULL_UP,
     .output_type = GPIO_OUTPUT_PUSH_PULL,
-    .speed = GPIO_SPEED_HIGH,
+    .speed = GPIO_SPEED_VERY_HIGH,
     .initial_level = GPIO_LEVEL_LOW
 };
 

@@ -256,6 +256,172 @@ BoardStatus gpio_read_output_latch(BoardPinId id, GpioLevel* level) {
     return BOARD_OK;
 }
 
+#define GPIO_EXTI_SUPPORTED_LINES ((1UL << 1U) | (1UL << 5U) | (1UL << 6U) | \
+                                   (1UL << 7U) | (1UL << 8U) | (1UL << 9U))
+
+static volatile uint32_t gpio_exti_latched = 0U;
+
+void EXTI1_IRQHandler(void);
+void EXTI9_5_IRQHandler(void);
+
+static void gpio_exti_handle(uint32_t lines) {
+    uint32_t pending = EXTI->PR1 & lines & EXTI->IMR1;
+
+    if (pending != 0U) {
+        EXTI->PR1 = pending;
+        gpio_exti_latched |= pending;
+    }
+}
+
+void EXTI1_IRQHandler(void) {
+    gpio_exti_handle(1UL << 1U);
+}
+
+void EXTI9_5_IRQHandler(void) {
+    gpio_exti_handle((1UL << 5U) | (1UL << 6U) | (1UL << 7U) | (1UL << 8U) | (1UL << 9U));
+}
+
+static BoardStatus gpio_exti_port_index(const GPIO_TypeDef* port, uint32_t* index) {
+    if (port == GPIOA) {
+        *index = 0U;
+    } else if (port == GPIOB) {
+        *index = 1U;
+    } else if (port == GPIOC) {
+        *index = 2U;
+    } else if (port == GPIOD) {
+        *index = 3U;
+    } else if (port == GPIOE) {
+        *index = 4U;
+    } else if (port == GPIOF) {
+        *index = 5U;
+    } else if (port == GPIOG) {
+        *index = 6U;
+    } else {
+        return BOARD_ERR_UNSUPPORTED;
+    }
+
+    return BOARD_OK;
+}
+
+static BoardStatus gpio_exti_line(BoardPinId id, const BoardPinDesc** pin, uint32_t* line_mask) {
+    BoardStatus status;
+
+    status = gpio_get_pin(id, pin);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    *line_mask = 1UL << (*pin)->pin;
+
+    if ((*line_mask & GPIO_EXTI_SUPPORTED_LINES) == 0U) {
+        return BOARD_ERR_UNSUPPORTED;
+    }
+
+    return BOARD_OK;
+}
+
+static IRQn_Type gpio_exti_irqn(uint32_t line_mask) {
+    return (line_mask == (1UL << 1U)) ? EXTI1_IRQn : EXTI9_5_IRQn;
+}
+
+BoardStatus gpio_falling_edge_irq_enable(BoardPinId id) {
+    const BoardPinDesc* pin;
+    uint32_t line_mask;
+    uint32_t port_index;
+    uint32_t exticr_index;
+    uint32_t exticr_shift;
+    uint32_t primask;
+    BoardStatus status;
+
+    status = gpio_exti_line(id, &pin, &line_mask);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = gpio_exti_port_index(pin->port, &port_index);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
+    (void)RCC->APB2ENR;
+
+    exticr_index = (uint32_t)pin->pin / 4U;
+    exticr_shift = ((uint32_t)pin->pin % 4U) * 4U;
+
+    EXTI->IMR1 &= ~line_mask;
+
+    SYSCFG->EXTICR[exticr_index] &= ~(0xFUL << exticr_shift);
+    SYSCFG->EXTICR[exticr_index] |= port_index << exticr_shift;
+
+    EXTI->RTSR1 &= ~line_mask;
+    EXTI->FTSR1 |= line_mask;
+    EXTI->PR1 = line_mask;
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+    gpio_exti_latched &= ~line_mask;
+    __set_PRIMASK(primask);
+
+    EXTI->IMR1 |= line_mask;
+
+    NVIC_ClearPendingIRQ(gpio_exti_irqn(line_mask));
+    NVIC_EnableIRQ(gpio_exti_irqn(line_mask));
+
+    return BOARD_OK;
+}
+
+BoardStatus gpio_falling_edge_irq_disable(BoardPinId id) {
+    const BoardPinDesc* pin;
+    uint32_t line_mask;
+    uint32_t primask;
+    BoardStatus status;
+
+    status = gpio_exti_line(id, &pin, &line_mask);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    EXTI->IMR1 &= ~line_mask;
+    EXTI->FTSR1 &= ~line_mask;
+    EXTI->PR1 = line_mask;
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+    gpio_exti_latched &= ~line_mask;
+    __set_PRIMASK(primask);
+
+    return BOARD_OK;
+}
+
+BoardStatus gpio_falling_edge_irq_take(BoardPinId id, uint8_t *triggered) {
+    const BoardPinDesc* pin;
+    uint32_t line_mask;
+    uint32_t primask;
+    BoardStatus status;
+
+    if (triggered == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *triggered = 0U;
+
+    status = gpio_exti_line(id, &pin, &line_mask);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+    if ((gpio_exti_latched & line_mask) != 0U) {
+        gpio_exti_latched &= ~line_mask;
+        *triggered = 1U;
+    }
+    __set_PRIMASK(primask);
+
+    return BOARD_OK;
+}
+
 BoardStatus gpio_set_disconnected(BoardPinId id) {
     static const GpioConfig disconnected_config = {
         .mode = GPIO_MODE_ANALOG,

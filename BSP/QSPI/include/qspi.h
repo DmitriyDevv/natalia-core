@@ -93,6 +93,8 @@ BoardStatus qspi_dma_init(void);
 
 BoardStatus qspi_select_bank(QspiBank bank);
 
+void qspi_invalidate_pins(void);
+
 BoardStatus qspi_command_no_data(const QspiCommand* command);
 
 BoardStatus qspi_read(const QspiCommand* command,

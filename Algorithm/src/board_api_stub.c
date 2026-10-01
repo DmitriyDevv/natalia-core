@@ -29,12 +29,21 @@ static uint8_t board_stub_mram_test_result[BOARD_STUB_MRAM_COPY_COUNT][2][BOARD_
 
 static uint8_t board_stub_initialized;
 
+static BoardNandBlockMap board_stub_nand_map[BOARD_STUB_NAND_BANK_COUNT];
+static uint8_t board_stub_nand_map_valid[BOARD_STUB_NAND_BANK_COUNT];
+static uint8_t board_stub_nand_factory_bad[BOARD_STUB_NAND_BANK_COUNT][BOARD_NAND_BLOCK_MAP_BYTES];
+static uint32_t board_stub_nand_scans[BOARD_STUB_NAND_BANK_COUNT];
+static uint32_t board_stub_nand_write_fail_at[BOARD_STUB_NAND_BANK_COUNT];
+static BoardNandBlockMap board_stub_mram_block_map[BOARD_STUB_MRAM_COPY_COUNT][2];
+static uint8_t board_stub_mram_block_map_valid[BOARD_STUB_MRAM_COPY_COUNT][2];
+
 static bool board_stub_mram_write_fail;
 
 static uint8_t board_stub_mram_crc_valid[BOARD_STUB_MRAM_COPY_COUNT] = {1U, 1U};
 
 static uint8_t board_stub_nand_powered_override[BOARD_STUB_NAND_BANK_COUNT];
 static uint8_t board_stub_nand_powered_override_value[BOARD_STUB_NAND_BANK_COUNT];
+static uint8_t board_stub_nand_power_fault[BOARD_STUB_NAND_BANK_COUNT];
 
 static uint8_t board_stub_test_result_valid[2] = {1U, 1U};
 
@@ -49,6 +58,19 @@ static int32_t board_stub_power_ua[2] = {0, 0};
 static uint8_t board_stub_power_ready[2] = {1U, 1U};
 static uint8_t board_stub_ped_is_powered = 1U;
 
+#define BOARD_STUB_PED_RECORD_CAPACITY 256U
+#define BOARD_STUB_PED_WRITE_CAPACITY  32U
+
+static BoardPedRecord board_stub_ped_records[BOARD_STUB_PED_RECORD_CAPACITY];
+static size_t board_stub_ped_record_head;
+static size_t board_stub_ped_record_count;
+static uint32_t board_stub_ped_faults;
+static uint8_t board_stub_ped_acquiring;
+static uint8_t board_stub_ped_write_address[BOARD_STUB_PED_WRITE_CAPACITY];
+static uint16_t board_stub_ped_write_value[BOARD_STUB_PED_WRITE_CAPACITY];
+static size_t board_stub_ped_write_count;
+static BoardStatus board_stub_ped_write_status = BOARD_OK;
+
 static uint32_t board_stub_rtc_seconds;
 static uint16_t board_stub_rtc_milliseconds;
 
@@ -59,6 +81,12 @@ void board_stub_set_mram_write_fail(bool fail) {
 void board_stub_set_mram_crc_valid(uint8_t copy_id, bool valid) {
     if ((copy_id == 1U) || (copy_id == 2U)) {
         board_stub_mram_crc_valid[copy_id - 1U] = valid ? 1U : 0U;
+    }
+}
+
+void board_stub_set_nand_power_fault(uint8_t bank_id) {
+    if ((bank_id == 1U) || (bank_id == 2U)) {
+        board_stub_nand_power_fault[bank_id - 1U] = 1U;
     }
 }
 
@@ -102,6 +130,80 @@ void board_stub_set_ped_powered(bool powered) {
     board_stub_ped_is_powered = powered ? 1U : 0U;
 }
 
+bool board_stub_push_ped_record(const BoardPedRecord* record) {
+    size_t tail;
+
+    if ((record == NULL) || (board_stub_ped_record_count >= BOARD_STUB_PED_RECORD_CAPACITY)) {
+        return false;
+    }
+
+    tail = (board_stub_ped_record_head + board_stub_ped_record_count) % BOARD_STUB_PED_RECORD_CAPACITY;
+    board_stub_ped_records[tail] = *record;
+    ++board_stub_ped_record_count;
+
+    return true;
+}
+
+void board_stub_set_ped_faults(uint32_t faults) {
+    board_stub_ped_faults = faults;
+}
+
+void board_stub_set_ped_write_status(BoardStatus status) {
+    board_stub_ped_write_status = status;
+}
+
+bool board_stub_ped_acquisition_active(void) {
+    return board_stub_ped_acquiring != 0U;
+}
+
+size_t board_stub_ped_register_write_count(void) {
+    return board_stub_ped_write_count;
+}
+
+bool board_stub_ped_register_write_at(size_t index, uint8_t* address, uint16_t* value) {
+    if ((index >= board_stub_ped_write_count) || (index >= BOARD_STUB_PED_WRITE_CAPACITY) ||
+        (address == NULL) || (value == NULL)) {
+        return false;
+    }
+
+    *address = board_stub_ped_write_address[index];
+    *value = board_stub_ped_write_value[index];
+
+    return true;
+}
+
+static void board_stub_set_map_bit(uint8_t* bits, uint32_t block) {
+    if (block < BOARD_NAND_BLOCK_COUNT) {
+        bits[block / 8U] = (uint8_t)(bits[block / 8U] | (uint8_t)(1U << (block % 8U)));
+    }
+}
+
+void board_stub_set_nand_factory_bad_block(uint8_t bank_id, uint32_t block) {
+    if ((bank_id == 1U) || (bank_id == 2U)) {
+        board_stub_set_map_bit(board_stub_nand_factory_bad[bank_id - 1U], block);
+    }
+}
+
+void board_stub_set_nand_write_fail_at(uint8_t bank_id, uint32_t packet_index) {
+    if ((bank_id == 1U) || (bank_id == 2U)) {
+        board_stub_nand_write_fail_at[bank_id - 1U] = packet_index;
+    }
+}
+
+uint32_t board_stub_nand_scan_count(uint8_t bank_id) {
+    return ((bank_id == 1U) || (bank_id == 2U)) ? board_stub_nand_scans[bank_id - 1U] : 0U;
+}
+
+bool board_stub_nand_map_is_valid(uint8_t bank_id) {
+    return ((bank_id == 1U) || (bank_id == 2U)) && (board_stub_nand_map_valid[bank_id - 1U] != 0U);
+}
+
+void board_stub_set_mram_block_map_valid(uint8_t copy_id, uint8_t nand_bank, bool valid) {
+    if (((copy_id == 1U) || (copy_id == 2U)) && ((nand_bank == 1U) || (nand_bank == 2U))) {
+        board_stub_mram_block_map_valid[copy_id - 1U][nand_bank - 1U] = valid ? 1U : 0U;
+    }
+}
+
 void board_stub_set_test_result_valid(uint8_t nand_bank, bool valid) {
     if ((nand_bank == 1U) || (nand_bank == 2U)) {
         board_stub_test_result_valid[nand_bank - 1U] = valid ? 1U : 0U;
@@ -128,6 +230,8 @@ void board_stub_reset_all(void) {
     board_stub_nand_powered_override[1] = 0U;
     board_stub_nand_powered_override_value[0] = 0U;
     board_stub_nand_powered_override_value[1] = 0U;
+    board_stub_nand_power_fault[0] = 0U;
+    board_stub_nand_power_fault[1] = 0U;
 
     board_stub_test_result_valid[0] = 1U;
     board_stub_test_result_valid[1] = 1U;
@@ -148,6 +252,22 @@ void board_stub_reset_all(void) {
     board_stub_power_ready[0] = 1U;
     board_stub_power_ready[1] = 1U;
     board_stub_ped_is_powered = 1U;
+
+    board_stub_ped_record_head = 0U;
+    board_stub_ped_record_count = 0U;
+    board_stub_ped_faults = 0U;
+    board_stub_ped_acquiring = 0U;
+    board_stub_ped_write_count = 0U;
+    board_stub_ped_write_status = BOARD_OK;
+
+    (void)memset(board_stub_nand_map, 0, sizeof(board_stub_nand_map));
+    (void)memset(board_stub_nand_map_valid, 0, sizeof(board_stub_nand_map_valid));
+    (void)memset(board_stub_nand_factory_bad, 0, sizeof(board_stub_nand_factory_bad));
+    (void)memset(board_stub_nand_scans, 0, sizeof(board_stub_nand_scans));
+    board_stub_nand_write_fail_at[0] = UINT32_MAX;
+    board_stub_nand_write_fail_at[1] = UINT32_MAX;
+    (void)memset(board_stub_mram_block_map, 0, sizeof(board_stub_mram_block_map));
+    (void)memset(board_stub_mram_block_map_valid, 0, sizeof(board_stub_mram_block_map_valid));
 
     board_stub_rtc_seconds = 0U;
     board_stub_rtc_milliseconds = 0U;
@@ -521,6 +641,29 @@ BoardStatus board_nand_is_powered(uint8_t bank_id, uint8_t *is_powered) {
     return BOARD_OK;
 }
 
+BoardStatus board_nand_take_power_fault(uint8_t bank_id, uint8_t *fault) {
+    size_t bank_index;
+    BoardStatus status;
+
+    if (fault == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *fault = 0U;
+
+    board_stub_init_once();
+
+    status = board_stub_get_nand_index(bank_id, &bank_index);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    *fault = board_stub_nand_power_fault[bank_index];
+    board_stub_nand_power_fault[bank_index] = 0U;
+
+    return BOARD_OK;
+}
+
 BoardStatus board_nand_connect(uint8_t bank_id) {
     size_t bank_index;
     BoardStatus status;
@@ -654,6 +797,12 @@ BoardStatus board_nand_write_packet(uint8_t bank_id, const void *packet) {
 
     if (board_stub_nand_committed_packets[bank_index] >= BOARD_STUB_NAND_PACKET_COUNT) {
         board_stub_nand_is_full[bank_index] = 1U;
+        return BOARD_ERR_IO;
+    }
+
+    if (board_stub_nand_committed_packets[bank_index] == board_stub_nand_write_fail_at[bank_index]) {
+        board_stub_set_map_bit(board_stub_nand_map[bank_index].candidate,
+                               board_stub_nand_committed_packets[bank_index] / BOARD_NAND_PACKETS_PER_BLOCK);
         return BOARD_ERR_IO;
     }
 
@@ -856,10 +1005,151 @@ BoardStatus board_nand_erase_start(uint8_t bank_id) {
     }
 
     (void)memset(board_stub_nand[bank_index], 0xFF, BOARD_STUB_NAND_SIZE);
+    {
+        size_t byte;
+
+        for (byte = 0U; byte < BOARD_NAND_BLOCK_MAP_BYTES; ++byte) {
+            board_stub_nand_map[bank_index].bad[byte] =
+                (uint8_t)(board_stub_nand_map[bank_index].bad[byte] |
+                          board_stub_nand_map[bank_index].candidate[byte]);
+            board_stub_nand_map[bank_index].candidate[byte] = 0U;
+        }
+    }
     board_stub_nand_committed_packets[bank_index] = 0U;
     board_stub_nand_read_packet_count[bank_index] = 0U;
     board_stub_nand_read_next_packet[bank_index] = 0U;
     board_stub_nand_is_full[bank_index] = 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_nand_bad_block_scan_start(uint8_t bank_id) {
+    size_t bank_index;
+    BoardStatus status;
+
+    board_stub_init_once();
+
+    status = board_stub_get_nand_index(bank_id, &bank_index);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    (void)memset(&board_stub_nand_map[bank_index], 0, sizeof(board_stub_nand_map[bank_index]));
+    (void)memcpy(board_stub_nand_map[bank_index].bad, board_stub_nand_factory_bad[bank_index],
+                 BOARD_NAND_BLOCK_MAP_BYTES);
+    board_stub_nand_map_valid[bank_index] = 1U;
+    ++board_stub_nand_scans[bank_index];
+
+    return BOARD_OK;
+}
+
+BoardStatus board_nand_bad_block_scan_poll(uint8_t bank_id, uint8_t *is_done) {
+    size_t bank_index;
+    BoardStatus status;
+
+    if (is_done == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    board_stub_init_once();
+
+    status = board_stub_get_nand_index(bank_id, &bank_index);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    *is_done = board_stub_nand_map_valid[bank_index];
+
+    return BOARD_OK;
+}
+
+BoardStatus board_nand_set_block_map(uint8_t bank_id, const BoardNandBlockMap *map) {
+    size_t bank_index;
+    BoardStatus status;
+
+    if (map == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    board_stub_init_once();
+
+    status = board_stub_get_nand_index(bank_id, &bank_index);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    board_stub_nand_map[bank_index] = *map;
+    board_stub_nand_map_valid[bank_index] = 1U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_nand_get_block_map(uint8_t bank_id, BoardNandBlockMap *map) {
+    size_t bank_index;
+    BoardStatus status;
+
+    if (map == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    board_stub_init_once();
+
+    status = board_stub_get_nand_index(bank_id, &bank_index);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    if (board_stub_nand_map_valid[bank_index] == 0U) {
+        return BOARD_ERR_NOT_READY;
+    }
+
+    *map = board_stub_nand_map[bank_index];
+
+    return BOARD_OK;
+}
+
+BoardStatus board_mram_write_block_map(uint8_t copy_id, uint8_t nand_bank, const BoardNandBlockMap *map) {
+    size_t copy_index;
+    BoardStatus status;
+
+    if ((map == NULL) || ((nand_bank != 1U) && (nand_bank != 2U))) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    board_stub_init_once();
+
+    status = board_stub_get_mram_index(copy_id, &copy_index);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    if (board_stub_mram_write_fail) {
+        return BOARD_ERR_IO;
+    }
+
+    board_stub_mram_block_map[copy_index][nand_bank - 1U] = *map;
+    board_stub_mram_block_map_valid[copy_index][nand_bank - 1U] = 1U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_mram_read_block_map(uint8_t copy_id, uint8_t nand_bank, BoardNandBlockMap *map, uint8_t *is_valid) {
+    size_t copy_index;
+    BoardStatus status;
+
+    if ((map == NULL) || (is_valid == NULL) || ((nand_bank != 1U) && (nand_bank != 2U))) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    board_stub_init_once();
+
+    status = board_stub_get_mram_index(copy_id, &copy_index);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    *map = board_stub_mram_block_map[copy_index][nand_bank - 1U];
+    *is_valid = board_stub_mram_block_map_valid[copy_index][nand_bank - 1U];
 
     return BOARD_OK;
 }
@@ -981,6 +1271,73 @@ BoardStatus board_ped_take_trigger_events(uint32_t *event_count) {
 
     *event_count = board_stub_ped_trigger_pending;
     board_stub_ped_trigger_pending = 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_acquisition_start(void) {
+    board_stub_ped_acquiring = 1U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_acquisition_stop(void) {
+    board_stub_ped_acquiring = 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_take_records(BoardPedRecord *records, size_t capacity, size_t *count) {
+    size_t taken = 0U;
+
+    if ((count == NULL) || ((records == NULL) && (capacity > 0U))) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    while ((taken < capacity) && (board_stub_ped_record_count > 0U)) {
+        records[taken] = board_stub_ped_records[board_stub_ped_record_head];
+        board_stub_ped_record_head = (board_stub_ped_record_head + 1U) % BOARD_STUB_PED_RECORD_CAPACITY;
+        --board_stub_ped_record_count;
+        ++taken;
+    }
+
+    *count = taken;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_write_register(uint8_t address, uint16_t value) {
+    if (board_stub_ped_write_status != BOARD_OK) {
+        return board_stub_ped_write_status;
+    }
+
+    if (board_stub_ped_write_count < BOARD_STUB_PED_WRITE_CAPACITY) {
+        board_stub_ped_write_address[board_stub_ped_write_count] = address;
+        board_stub_ped_write_value[board_stub_ped_write_count] = value;
+    }
+    ++board_stub_ped_write_count;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_take_faults(uint32_t *faults) {
+    if (faults == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *faults = board_stub_ped_faults;
+    board_stub_ped_faults = 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_ped_get_stats(BoardPedStats *stats) {
+    if (stats == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    memset(stats, 0, sizeof(*stats));
+    stats->ring_count = (uint32_t)board_stub_ped_record_count;
 
     return BOARD_OK;
 }

@@ -27,8 +27,11 @@
 #define NAND_REG_STATUS 0xC0U
 
 #define NAND_STATUS_OIP 0x01U
+#define NAND_STATUS_WEL 0x02U
 #define NAND_STATUS_ERASE_FAIL 0x04U
 #define NAND_STATUS_PROGRAM_FAIL 0x08U
+#define NAND_STATUS_ECC_MASK 0x70U
+#define NAND_STATUS_ECC_SHIFT 4U
 
 #define NAND_CONFIGURATION_CONTINUOUS_READ 0x01U
 #define NAND_CONFIGURATION_DRIVER_STRENGTH_MASK 0x0CU
@@ -38,6 +41,12 @@
 #define NAND_EXPECTED_DEVICE_ID 0x34U
 
 #define NAND_TIMEOUT_LOOPS 8000000UL
+#define NAND_BUSY_CONFIRM_ATTEMPTS 12U
+#define NAND_BUSY_CONFIRM_STEP_US 10U
+#define NAND_INIT_ATTEMPTS 3U
+#define NAND_BLOCK_LOCK_UNLOCKED 0x02U
+#define NAND_BUSY_SETTLE_US 20U
+#define NAND_PROGRAM_MIN_US 80U
 
 #ifndef NAND_MT29F_CACHE_READ_MODE
 #define NAND_MT29F_CACHE_READ_MODE 1
@@ -90,5 +99,13 @@ BoardStatus nand_mt29f_poll_ready_once(uint8_t* is_ready,
                                        uint8_t* status_value);
 
 BoardStatus nand_mt29f_wait_ready(uint8_t* status_value);
+
+BoardStatus nand_mt29f_wait_busy_then_ready(uint8_t* status_value);
+
+void nand_mt29f_clear_fault(void);
+
+BoardStatus nand_mt29f_record_fault(NandMt29fFault fault,
+                                    uint8_t chip_status,
+                                    BoardStatus status);
 
 #endif

@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "alarm.h"
 #include "algorithm.h"
 #include "board_stub.h"
 #include "event_queue.h"
@@ -83,10 +84,57 @@ static void take_drains_counter(void) {
     assert(system_event_queue_get_count() == 0U);
 }
 
+static void nand_power_fault_raises_alarm_and_enters_alarm_mode(void) {
+    SystemContext ctx;
+    SystemEvent event;
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.state = STATE_DUTY;
+    ctx.alarm_mask = ALARM_ALL_MASK;
+    board_stub_reset_all();
+    system_event_queue_init();
+
+    board_stub_set_nand_power_fault(2U);
+
+    algorithm_collect_hw_events(&ctx);
+
+    assert((ctx.alarm_status & ALARM_NAND_PS) != 0U);
+    assert((ctx.masked_alarm & ALARM_NAND_PS) != 0U);
+    assert(system_event_queue_get_count() == 1U);
+    assert(system_event_queue_pop(&event));
+    assert(event.type == EVENT_MASKED_ALARM_SET);
+
+    /* The fault latch is consumed: a second collection raises nothing new. */
+    algorithm_collect_hw_events(&ctx);
+    assert(system_event_queue_get_count() == 0U);
+
+    /* Through the state machine the masked alarm moves DUTY to ALARM. */
+    (void)system_event_queue_push_back_type(EVENT_MASKED_ALARM_SET);
+    algorithm_process_events(&ctx);
+    assert(ctx.state == STATE_ALARM);
+}
+
+static void no_nand_power_fault_no_alarm(void) {
+    SystemContext ctx;
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.state = STATE_DUTY;
+    ctx.alarm_mask = ALARM_ALL_MASK;
+    board_stub_reset_all();
+    system_event_queue_init();
+
+    algorithm_collect_hw_events(&ctx);
+
+    assert((ctx.alarm_status & ALARM_NAND_PS) == 0U);
+    assert(system_event_queue_get_count() == 0U);
+}
+
 int main(void) {
     rtc_collected_in_duty_ped_skipped();
     rtc_and_ped_collected_in_observe();
     take_drains_counter();
+    nand_power_fault_raises_alarm_and_enters_alarm_mode();
+    no_nand_power_fault_no_alarm();
 
     return 0;
 }

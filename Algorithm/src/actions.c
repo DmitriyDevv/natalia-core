@@ -1,6 +1,7 @@
 #include "actions.h"
 #include "alarm_monitor.h"
 #include "mram_store.h"
+#include "nand_map.h"
 #include "observe.h"
 #include "tlm_staging.h"
 
@@ -259,6 +260,26 @@ static void cleanup_failed_mode_start(SystemContext* ctx, NandBank bank, bool cl
 
     if (is_valid_bank(bank)) {
         (void)power_off_bank(ctx, bank);
+    }
+}
+
+static uint32_t stored_packet_count(NandBank bank) {
+    MramStoreServiceData service_data = {0};
+
+    (void)mram_store_load_service_data(&service_data);
+
+    return (bank == NAND_BANK_1) ? service_data.nand1_packet_count : service_data.nand2_packet_count;
+}
+
+static void reset_bank_progress(MramStoreServiceData* service_data, NandBank bank) {
+    if (bank == NAND_BANK_1) {
+        service_data->nand1_packet_count = 0U;
+        service_data->nand1_last_packet_crc = 0U;
+        service_data->nand1_last_dumped_packet = 0U;
+    } else if (bank == NAND_BANK_2) {
+        service_data->nand2_packet_count = 0U;
+        service_data->nand2_last_packet_crc = 0U;
+        service_data->nand2_last_dumped_packet = 0U;
     }
 }
 
@@ -618,6 +639,13 @@ ActionResult action_start_observe(SystemContext* ctx, const SystemEvent* event) 
         return result;
     }
 
+    result = require_ok(nand_map_load(bank_id(bank)));
+    if (result != ACTION_OK) {
+        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
+        cleanup_failed_mode_start(ctx, bank, true);
+        return result;
+    }
+
     result = require_ok(board_nand_open_write(bank_id(bank), 0U));
     if (result != ACTION_OK) {
         ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
@@ -693,6 +721,13 @@ ActionResult action_start_erase(SystemContext* ctx, const SystemEvent* event) {
         return result;
     }
 
+    result = require_ok(nand_map_load(bank_id(bank)));
+    if (result != ACTION_OK) {
+        ctx->erase.stage = ERASE_STAGE_FINISH_ALARM;
+        cleanup_failed_mode_start(ctx, bank, false);
+        return result;
+    }
+
     ctx->erase.stage = ERASE_STAGE_START;
     result = require_ok(board_nand_erase_start(bank_id(bank)));
     if (result != ACTION_OK) {
@@ -745,6 +780,13 @@ ActionResult action_start_test(SystemContext* ctx, const SystemEvent* event) {
     ctx->test.stage = TEST_STAGE_ENTER;
 
     result = prepare_single_nand_bank(ctx, bank);
+    if (result != ACTION_OK) {
+        ctx->test.stage = TEST_STAGE_FINISH_ALARM;
+        cleanup_failed_mode_start(ctx, bank, false);
+        return result;
+    }
+
+    result = require_ok(nand_map_rebuild(bank_id(bank)));
     if (result != ACTION_OK) {
         ctx->test.stage = TEST_STAGE_FINISH_ALARM;
         cleanup_failed_mode_start(ctx, bank, false);
@@ -842,13 +884,15 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
         return result;
     }
 
+    result = require_ok(nand_map_load(bank_id(bank)));
+    if (result != ACTION_OK) {
+        ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+        cleanup_failed_mode_start(ctx, bank, false);
+        return result;
+    }
+
     if (event->command.dump.dump_all) {
-        result = require_ok(board_nand_get_committed_packet_count(bank_id(bank), &packet_count));
-        if (result != ACTION_OK) {
-            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-            cleanup_failed_mode_start(ctx, bank, false);
-            return result;
-        }
+        packet_count = stored_packet_count(bank);
 
         if (packet_count == 0U) {
             ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
@@ -1095,6 +1139,9 @@ ActionResult action_update_erase_service_data(const SystemContext* ctx) {
     service_data.nand2_full = ctx->nand2.is_full ? 1U : 0U;
     service_data.last_test_status = ctx->test.result_status;
 
+    reset_bank_progress(&service_data, ctx->erase.bank);
+    (void)nand_map_save(bank_id(ctx->erase.bank));
+
     if (ctx->erase.bank == NAND_BANK_1) {
         count = service_data.nand1_erase_count;
         if (count < 0xFFFFU) {
@@ -1149,6 +1196,11 @@ ActionResult action_update_test_service_data(const SystemContext* ctx) {
     service_data.nand1_full = ctx->nand1.is_full ? 1U : 0U;
     service_data.nand2_full = ctx->nand2.is_full ? 1U : 0U;
     service_data.last_test_status = ctx->test.result_status;
+
+    if (ctx->test.final_erase && !ctx->test.operation_failed) {
+        reset_bank_progress(&service_data, ctx->test.bank);
+    }
+    (void)nand_map_save(bank_id(ctx->test.bank));
 
     if (ctx->test.bank == NAND_BANK_1) {
         count = service_data.nand1_test_count;

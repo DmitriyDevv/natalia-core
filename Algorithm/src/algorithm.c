@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "alarm.h"
+#include "alarm_monitor.h"
 #include "board_api.h"
 #include "dump_mode_config.h"
 #include "event_queue.h"
@@ -480,12 +482,23 @@ static void observe_mode_poll(SystemContext *ctx) {
     }
 }
 
+static void collect_nand_power_fault(SystemContext *ctx, uint8_t bank_id) {
+    uint8_t fault = 0U;
+
+    if ((board_nand_take_power_fault(bank_id, &fault) == BOARD_OK) && (fault != 0U)) {
+        alarm_raise(ctx, ALARM_NAND_PS);
+    }
+}
+
 void algorithm_collect_hw_events(SystemContext *ctx) {
     uint32_t count;
 
     if (ctx == NULL) {
         return;
     }
+
+    collect_nand_power_fault(ctx, 1U);
+    collect_nand_power_fault(ctx, 2U);
 
     count = 0U;
     if (board_rtc_take_1hz_events(&count) == BOARD_OK) {

@@ -339,6 +339,7 @@ int main(void) {
     (void)timebase_init();
 
     (void)debug_log_init();
+    timebase_delay_ms_blocking(5000U);
     debug_log_write("\r\nnand full test start\r\n");
 
     status = board_init_hardware();

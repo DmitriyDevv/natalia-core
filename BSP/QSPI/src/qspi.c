@@ -51,6 +51,8 @@ static volatile BoardStatus qspi_dma_status = BOARD_OK;
 static volatile QspiAsyncState qspi_poll_state = QSPI_ASYNC_IDLE;
 static volatile BoardStatus qspi_poll_status = BOARD_OK;
 
+static uint8_t qspi_pins_bank = 0U;
+
 static QspiDebugSnapshot qspi_dma_timeout_snapshot;
 static uint8_t qspi_dma_timeout_snapshot_valid = 0U;
 
@@ -746,8 +748,13 @@ BoardStatus qspi_init(void) {
     qspi_dma_status = BOARD_OK;
     qspi_poll_state = QSPI_ASYNC_IDLE;
     qspi_poll_status = BOARD_OK;
+    qspi_pins_bank = 0U;
 
     return BOARD_OK;
+}
+
+void qspi_invalidate_pins(void) {
+    qspi_pins_bank = 0U;
 }
 
 BoardStatus qspi_dma_init(void) {
@@ -790,9 +797,15 @@ BoardStatus qspi_select_bank(QspiBank bank) {
         return status;
     }
 
-    status = qspi_configure_pins(bank);
-    if (status != BOARD_OK) {
-        return status;
+    if (qspi_pins_bank != (uint8_t)bank) {
+        qspi_pins_bank = 0U;
+
+        status = qspi_configure_pins(bank);
+        if (status != BOARD_OK) {
+            return status;
+        }
+
+        qspi_pins_bank = (uint8_t)bank;
     }
 
     if (bank == QSPI_BANK_1) {

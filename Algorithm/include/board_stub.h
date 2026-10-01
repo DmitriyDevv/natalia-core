@@ -52,6 +52,23 @@ void board_stub_set_ped_powered(bool powered);
  * confirmation" to exercise the ALARM_NAND_PS path. */
 void board_stub_set_nand_powered(uint8_t bank_id, bool powered);
 
+/* Latches one PU_NANDx_PSON falling edge (load-switch fault) for a bank (1 or 2);
+ * board_nand_take_power_fault reports it once and clears it. */
+void board_stub_set_nand_power_fault(uint8_t bank_id);
+
+void board_stub_set_nand_factory_bad_block(uint8_t bank_id, uint32_t block);
+void board_stub_set_nand_write_fail_at(uint8_t bank_id, uint32_t packet_index);
+uint32_t board_stub_nand_scan_count(uint8_t bank_id);
+bool board_stub_nand_map_is_valid(uint8_t bank_id);
+void board_stub_set_mram_block_map_valid(uint8_t copy_id, uint8_t nand_bank, bool valid);
+
+bool board_stub_push_ped_record(const BoardPedRecord* record);
+void board_stub_set_ped_faults(uint32_t faults);
+void board_stub_set_ped_write_status(BoardStatus status);
+bool board_stub_ped_acquisition_active(void);
+size_t board_stub_ped_register_write_count(void);
+bool board_stub_ped_register_write_at(size_t index, uint8_t* address, uint16_t* value);
+
 /* Sets the value returned by board_rtc_get_time. */
 void board_stub_set_rtc_time(uint32_t seconds, uint16_t milliseconds);
 

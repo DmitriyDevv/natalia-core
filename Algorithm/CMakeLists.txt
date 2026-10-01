@@ -7,6 +7,11 @@ target_sources(natalia_algorithm PRIVATE
         src/state.c
         src/observe.c
         src/ni_packet.c
+        src/ni_format.c
+        src/ni_stream.c
+        src/observe_science.c
+        src/nand_map.c
+        src/ni_writer.c
         src/tlm_staging.c
         src/mram_store.c
         src/event_queue.c
@@ -19,6 +24,7 @@ target_include_directories(natalia_algorithm PUBLIC
 
 target_link_libraries(natalia_algorithm PUBLIC
         natalia_core_api
+        natalia_crc16
 )
 
 target_sources(natalia_algorithm PRIVATE
