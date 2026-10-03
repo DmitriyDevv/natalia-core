@@ -324,7 +324,7 @@ static IRQn_Type gpio_exti_irqn(uint32_t line_mask) {
     return (line_mask == (1UL << 1U)) ? EXTI1_IRQn : EXTI9_5_IRQn;
 }
 
-BoardStatus gpio_falling_edge_irq_enable(BoardPinId id) {
+static BoardStatus gpio_edge_irq_enable(BoardPinId id, uint8_t rising) {
     const BoardPinDesc* pin;
     uint32_t line_mask;
     uint32_t port_index;
@@ -354,8 +354,13 @@ BoardStatus gpio_falling_edge_irq_enable(BoardPinId id) {
     SYSCFG->EXTICR[exticr_index] &= ~(0xFUL << exticr_shift);
     SYSCFG->EXTICR[exticr_index] |= port_index << exticr_shift;
 
-    EXTI->RTSR1 &= ~line_mask;
-    EXTI->FTSR1 |= line_mask;
+    if (rising != 0U) {
+        EXTI->FTSR1 &= ~line_mask;
+        EXTI->RTSR1 |= line_mask;
+    } else {
+        EXTI->RTSR1 &= ~line_mask;
+        EXTI->FTSR1 |= line_mask;
+    }
     EXTI->PR1 = line_mask;
 
     primask = __get_PRIMASK();
@@ -371,6 +376,14 @@ BoardStatus gpio_falling_edge_irq_enable(BoardPinId id) {
     return BOARD_OK;
 }
 
+BoardStatus gpio_falling_edge_irq_enable(BoardPinId id) {
+    return gpio_edge_irq_enable(id, 0U);
+}
+
+BoardStatus gpio_rising_edge_irq_enable(BoardPinId id) {
+    return gpio_edge_irq_enable(id, 1U);
+}
+
 BoardStatus gpio_falling_edge_irq_disable(BoardPinId id) {
     const BoardPinDesc* pin;
     uint32_t line_mask;
@@ -384,6 +397,7 @@ BoardStatus gpio_falling_edge_irq_disable(BoardPinId id) {
 
     EXTI->IMR1 &= ~line_mask;
     EXTI->FTSR1 &= ~line_mask;
+    EXTI->RTSR1 &= ~line_mask;
     EXTI->PR1 = line_mask;
 
     primask = __get_PRIMASK();

@@ -28,6 +28,7 @@ static void erase_mode_wait_step(SystemContext* ctx) {
     BoardStatus status = board_nand_erase_is_done(erase_bank_id(ctx->erase.bank), &is_done);
 
     if (status != BOARD_OK) {
+        alarm_raise(ctx, ALARM_NAND_PR);
         ctx->erase.operation_failed = true;
         ctx->erase.stage = ERASE_STAGE_FINISH_ALARM;
         finish_erase_step(ctx);
@@ -95,6 +96,7 @@ static void finish_test_step(SystemContext* ctx) {
 }
 
 static void fail_test_step(SystemContext* ctx, uint32_t status_flag) {
+    alarm_raise(ctx, ALARM_NAND_PR);
     ctx->test.result_status |= status_flag;
     ctx->test.operation_failed = true;
     ctx->test.result_valid = false;
@@ -309,6 +311,7 @@ static void dump_mode_read_step(SystemContext *ctx) {
     DumpContext *dump = &ctx->dump;
     uint32_t packet_index;
     uint32_t address;
+    BoardStatus status;
 
     if (dump->bytes_done >= dump->size) {
         dump->stage = DUMP_STAGE_FINISH_OK;
@@ -329,7 +332,9 @@ static void dump_mode_read_step(SystemContext *ctx) {
     dump->send_offset = 0U;
     dump->usb_retry_count = 0U;
 
-    if (board_nand_read_packet(dump_bank_id(dump->bank), packet_index, dump->packet_buffer) != BOARD_OK) {
+    status = board_nand_read_packet(dump_bank_id(dump->bank), packet_index, dump->packet_buffer);
+    if ((status != BOARD_OK) && (status != BOARD_ERR_CRC)) {
+        alarm_raise(ctx, ALARM_NAND_PR);
         fail_dump_step(ctx);
         return;
     }
@@ -349,6 +354,7 @@ static void dump_mode_send_step(SystemContext* ctx) {
     }
 
     bytes_left = (size_t)(dump->packet_size - dump->send_offset);
+    dump->tx_attempted = true;
     status = board_data_write(&dump->packet_buffer[dump->send_offset], bytes_left, &bytes_written);
 
     if ((status == BOARD_OK) && (bytes_written == 0U)) {
@@ -361,6 +367,7 @@ static void dump_mode_send_step(SystemContext* ctx) {
             return;
         }
 
+        alarm_raise(ctx, ALARM_USB_PR);
         fail_dump_step(ctx);
         return;
     }
@@ -424,6 +431,7 @@ static void observe_mode_full_step(SystemContext *ctx) {
 }
 
 static void observe_mode_fail(SystemContext *ctx) {
+    alarm_raise(ctx, ALARM_NAND_PR);
     ctx->observe.operation_failed = true;
     ctx->observe.pending_write = false;
     ctx->observe.write_active = false;
@@ -505,6 +513,14 @@ void algorithm_collect_hw_events(SystemContext *ctx) {
         while (count > 0U) {
             (void)system_event_queue_push_back_type(EVENT_RTC_1HZ);
             --count;
+        }
+    }
+
+    if (ctx->state == STATE_DUMP) {
+        uint8_t link_fault = 0U;
+
+        if ((board_data_link_take_fault(&link_fault) == BOARD_OK) && (link_fault != 0U)) {
+            alarm_raise(ctx, ALARM_USB_VBUS);
         }
     }
 

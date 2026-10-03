@@ -292,6 +292,9 @@ typedef struct {
     uint32_t packet_size;
     uint32_t send_offset;
     uint32_t usb_retry_count;
+    uint32_t tx_watch_bytes;
+    uint32_t tx_stall_seconds;
+    bool tx_attempted;
     uint8_t packet_buffer[DUMP_MODE_PACKET_SIZE];
     bool operation_failed;
     bool finish_requested;

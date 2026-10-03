@@ -104,6 +104,8 @@ static const BoardPinDesc board_pins[BOARD_PIN_COUNT] = {
     [BOARD_PIN_PU_PED_PS] = PIN_DESC(E, 6, BOARD_AF_NONE),
 #if !(defined(NATALIA_PIN_FTDI) && (NATALIA_PIN_FTDI != 0))
     [BOARD_PIN_PU_USB_VBUS] = PIN_DESC(A, 9, BOARD_AF_NONE),
+#else
+    [BOARD_PIN_PU_USB_VBUS] = PIN_DESC(G, 7, BOARD_AF_NONE),
 #endif
 
     [BOARD_PIN_PED_TG] = PIN_DESC(G, 13, BOARD_AF_NONE),
@@ -112,8 +114,8 @@ static const BoardPinDesc board_pins[BOARD_PIN_COUNT] = {
     [BOARD_PIN_PED_SLEEP] = PIN_DESC(E, 9, BOARD_AF_NONE),
     [BOARD_PIN_PED_PSON] = PIN_DESC(G, 14, BOARD_AF_NONE),
 
-    [BOARD_PIN_DEBUG_UART_TX] = PIN_DESC(G, 7, 8U),
 #if !(defined(NATALIA_PIN_FTDI) && (NATALIA_PIN_FTDI != 0))
+    [BOARD_PIN_DEBUG_UART_TX] = PIN_DESC(G, 7, 8U),
     [BOARD_PIN_DEBUG_UART_RX] = PIN_DESC(G, 8, 8U),
 #endif
 

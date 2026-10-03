@@ -178,6 +178,11 @@ BoardStatus board_usb_is_ready(uint8_t* is_ready);
 BoardStatus board_data_write(const void* buffer, size_t size, size_t* bytes_written);
 BoardStatus board_data_is_ready(uint8_t* is_ready);
 
+BoardStatus board_data_link_present(uint8_t* present);
+BoardStatus board_data_link_take_fault(uint8_t* fault);
+BoardStatus board_data_link_open(void);
+BoardStatus board_data_link_close(void);
+
 #if defined(NATALIA_ENABLE_BOARD_TEST_HOOKS) && (NATALIA_ENABLE_BOARD_TEST_HOOKS != 0)
 BoardStatus board_usb_test_capture_start(uint32_t packet_count, uint32_t acquisition_period_ticks);
 BoardStatus board_usb_test_capture_get_result(uint32_t* bytes_written, uint32_t* expected_bytes, uint32_t* error_count);

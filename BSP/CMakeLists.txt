@@ -4,7 +4,6 @@ option(NATALIA_ENABLE_I2C_DRIVER
 
 add_library(natalia_bsp STATIC
         GPIO/src/gpio.c
-        Board_API/src/board_startup_io.c
         QSPI/src/qspi_config.c
         QSPI/src/qspi.c
         RTC/src/rtc_config.c
@@ -258,8 +257,13 @@ if (NATALIA_ENABLE_USB_DEVICE_DRIVER)
 endif()
 
 if (NOT NATALIA_USE_BOARD_STUBS)
+    # board_startup_io.c is built here, not in natalia_bsp: it is called only from
+    # board_api.c and selects pin states by the same NATALIA_ENABLE_*_DRIVER flags
+    # (NAND, PED_REG, UNICAN, USB) that are attached to this target. Built inside
+    # natalia_bsp it never saw them and left PU_NANDx_PS/PSON and PU_PED_PS analog.
     add_library(natalia_board_api_impl STATIC
             Board_API/src/board_api.c
+            Board_API/src/board_startup_io.c
     )
 
     target_link_libraries(natalia_board_api_impl PUBLIC

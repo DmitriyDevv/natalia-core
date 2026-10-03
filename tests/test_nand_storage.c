@@ -45,16 +45,40 @@ static void mount_and_scan(void) {
     assert(nand_storage_get_block_map(BANK, &map) == BOARD_OK);
 }
 
-static void erase_bank(void) {
+static BoardStatus erase_bank_status(void) {
     uint8_t is_done = 0U;
     uint32_t guard;
+    BoardStatus status = BOARD_OK;
 
     assert(nand_storage_erase_bank_start(BANK) == BOARD_OK);
 
     for (guard = 0U; (guard < POLL_GUARD) && (is_done == 0U); ++guard) {
-        assert(nand_storage_erase_bank_poll(&is_done) == BOARD_OK);
+        status = nand_storage_erase_bank_poll(&is_done);
+        if (is_done == 0U) {
+            assert(status == BOARD_OK);
+        }
     }
     assert(is_done != 0U);
+
+    return status;
+}
+
+static void erase_bank(void) {
+    assert(erase_bank_status() == BOARD_OK);
+}
+
+static void write_one_packet(uint32_t index) {
+    uint8_t is_idle = 0U;
+    uint32_t guard;
+
+    assert(nand_storage_open_write(BANK, index) == BOARD_OK);
+    fill_packet(index);
+    assert(nand_storage_write_packet(packet) == BOARD_OK);
+
+    for (guard = 0U; (guard < POLL_GUARD) && (is_idle == 0U); ++guard) {
+        assert(nand_storage_write_flush(&is_idle) == BOARD_OK);
+    }
+    assert(is_idle != 0U);
 }
 
 static void write_session(uint32_t first, uint32_t count) {
@@ -201,7 +225,7 @@ static void ignored_erase_is_reported_but_not_retired(void) {
     fake_nand_set_erase_ignored(BANK_ID, 7U);
     fake_nand_set_erase_ignored(BANK_ID, 9U);
     mount_and_scan();
-    erase_bank();
+    assert(erase_bank_status() == BOARD_ERR_IO);
 
     assert(nand_storage_get_info(&info) == BOARD_OK);
     assert(info.erase_error_blocks == 2U);
@@ -270,6 +294,82 @@ static void program_fail_marks_candidate(void) {
     assert(map_bit(map.candidate, 0U) == 1U);
 }
 
+static void silent_erase_is_detected(void) {
+    NandStorageInfo info;
+
+    fake_nand_reset();
+    fake_nand_set_erase_silent(BANK_ID, 3U);
+    mount_and_scan();
+    erase_bank();
+
+    write_one_packet(3U * NAND_STORAGE_PACKETS_PER_BLOCK);
+    write_one_packet(4U * NAND_STORAGE_PACKETS_PER_BLOCK);
+
+    assert(erase_bank_status() == BOARD_ERR_IO);
+
+    assert(nand_storage_get_info(&info) == BOARD_OK);
+    assert(info.erase_verify_failed_blocks == 1U);
+    assert(info.erase_error_blocks == 0U);
+    assert(info.erase_erased_blocks == (NAND_MT29F_BLOCKS_PER_LUN - 1U));
+    assert(info.first_fault_block == 3U);
+    assert(fake_nand_block_is_erased(BANK_ID, 4U) != 0U);
+}
+
+static void mount_initializes_chip_once(void) {
+    uint8_t is_done = 0U;
+    uint32_t guard;
+
+    fake_nand_reset();
+    mount_and_scan();
+    assert(fake_nand_stats().init_calls == 1U);
+
+    erase_bank();
+    write_one_packet(0U);
+    assert(nand_storage_open_read(BANK, 1U) == BOARD_OK);
+    assert(nand_storage_read_packet(0U, readback) == BOARD_OK);
+    assert(fake_nand_stats().init_calls == 1U);
+
+    assert(nand_storage_init() == BOARD_OK);
+    assert(nand_storage_mount(BANK) == BOARD_OK);
+    assert(fake_nand_stats().init_calls == 2U);
+    assert(nand_storage_set_block_map(BANK, &map) == BOARD_OK);
+
+    fake_nand_set_program_fail(BANK_ID, 0U);
+    assert(nand_storage_open_write(BANK, 1U) == BOARD_OK);
+    fill_packet(1U);
+    assert(nand_storage_write_packet(packet) == BOARD_OK);
+    for (guard = 0U; (guard < POLL_GUARD) && (is_done == 0U); ++guard) {
+        if (nand_storage_write_flush(&is_done) != BOARD_OK) {
+            break;
+        }
+    }
+
+    assert(nand_storage_open_read(BANK, 1U) == BOARD_OK);
+    assert(fake_nand_stats().init_calls == 3U);
+}
+
+static void uncorrectable_read_returns_crc(void) {
+    NandStorageInfo info;
+
+    fake_nand_reset();
+    mount_and_scan();
+    erase_bank();
+    write_one_packet(0U);
+    write_one_packet(NAND_STORAGE_PACKETS_PER_BLOCK);
+    fake_nand_set_read_uncorrectable(BANK_ID, 0U);
+
+    assert(nand_storage_open_read(BANK, NAND_STORAGE_PACKETS_PER_BLOCK + 1U) == BOARD_OK);
+    (void)memset(readback, 0, sizeof(readback));
+    assert(nand_storage_read_packet(0U, readback) == BOARD_ERR_CRC);
+    assert(token_of(readback) == 0U);
+
+    assert(nand_storage_get_info(&info) == BOARD_OK);
+    assert(info.mode == NAND_STORAGE_MODE_READ);
+
+    assert(nand_storage_read_packet(NAND_STORAGE_PACKETS_PER_BLOCK, readback) == BOARD_OK);
+    assert(token_of(readback) == NAND_STORAGE_PACKETS_PER_BLOCK);
+}
+
 int main(void) {
     full_bank_erase_clears_every_block();
     two_write_sessions_keep_every_packet();
@@ -277,6 +377,9 @@ int main(void) {
     ignored_erase_is_reported_but_not_retired();
     erase_fail_retires_block();
     program_fail_marks_candidate();
+    silent_erase_is_detected();
+    mount_initializes_chip_once();
+    uncorrectable_read_returns_crc();
 
     printf("test_nand_storage passed\n");
 

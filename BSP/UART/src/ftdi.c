@@ -32,10 +32,11 @@
 #define FTDI_DMA_REQUEST_USART1_TX (2UL)
 
 #define FTDI_PS_ON_LEVEL      GPIO_LEVEL_HIGH
+#define FTDI_PS_OFF_LEVEL     GPIO_LEVEL_LOW
 #define FTDI_PSON_READY_LEVEL GPIO_LEVEL_HIGH
 #define FTDI_RES_ACTIVE_LEVEL GPIO_LEVEL_LOW
 #define FTDI_RES_RUN_LEVEL    GPIO_LEVEL_HIGH
-#define FTDI_RESET_PULSE_MS   (5UL)
+#define FTDI_RESET_PULSE_MS   (200UL)
 #define FTDI_PSON_TIMEOUT_MS  (400UL)
 
 static uint8_t ftdi_tx_ring[FTDI_TX_RING_SIZE];
@@ -246,7 +247,7 @@ static void ftdi_configure_usart_regs(void) {
 
     USART1->CR1 = 0U;
     USART1->CR2 = 0U;
-    USART1->CR3 = USART_CR3_DMAT;
+    USART1->CR3 = USART_CR3_DMAT | USART_CR3_CTSE | USART_CR3_RTSE;
     USART1->BRR = (FTDI_KERNEL_CLOCK_HZ + (FTDI_BAUDRATE / 2U)) / FTDI_BAUDRATE;
 
     USART1->CR1 = USART_CR1_TE | USART_CR1_RE;
@@ -321,6 +322,38 @@ BoardStatus ftdi_init(void) {
     ftdi_initialized = 1U;
 
     return BOARD_OK;
+}
+
+BoardStatus ftdi_deinit(void) {
+    NVIC_DisableIRQ(DMA1_Channel4_IRQn);
+    DMA1_Channel4->CCR &= ~DMA_CCR_EN;
+    DMA1->IFCR = DMA_IFCR_CGIF4;
+
+    if ((RCC->APB2ENR & RCC_APB2ENR_USART1EN) != 0U) {
+        USART1->CR1 &= ~USART_CR1_UE;
+    }
+
+    (void)gpio_set_disconnected(BOARD_PIN_USART1_TX);
+    (void)gpio_set_disconnected(BOARD_PIN_USART1_RX);
+    (void)gpio_set_disconnected(BOARD_PIN_USART1_CTS);
+    (void)gpio_set_disconnected(BOARD_PIN_USART1_RTS);
+
+    (void)gpio_write(BOARD_PIN_PU_FTDI_RES, FTDI_RES_ACTIVE_LEVEL);
+    (void)gpio_write(BOARD_PIN_PU_FTDI_PS, FTDI_PS_OFF_LEVEL);
+
+    ftdi_tx_head = 0U;
+    ftdi_tx_tail = 0U;
+    ftdi_tx_count = 0U;
+    ftdi_tx_inflight = 0U;
+    ftdi_tx_dma_active = 0U;
+    ftdi_power_ok = 0U;
+    ftdi_initialized = 0U;
+
+    return BOARD_OK;
+}
+
+uint8_t ftdi_is_initialized(void) {
+    return ftdi_initialized;
 }
 
 void ftdi_set_mode(FtdiMode mode) {

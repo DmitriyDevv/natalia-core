@@ -19,14 +19,28 @@
  *
  * DESTRUCTIVE: the selected bank is erased before writing.
  *
+ * Writing goes through the Board_API / nand_storage double buffer: on BUSY the
+ * storage is polled and the packet is offered again, so the active + queued
+ * write path of nand_storage is exercised exactly as in flight.
+ *
  * Compile-time knobs (override with -DCMAKE_C_FLAGS="-D..."):
- *   NI_FILL_BANK_ID          1 or 2                       (default 1)
- *   NI_FILL_TOTAL_BYTES      total bytes to write         (default 16 MiB)
- *   NI_FILL_SESSION_ID       observation session id       (default 1)
- *   NI_FILL_DO_ERASE         0/1                          (default 1)
- *   NI_FILL_PREWARM          0/1 прогрев карты плохих блоков (default 1)
- *   NI_FILL_START_DELAY_MS   pause before touching NAND   (default 5000)
- *   NI_FILL_PROGRESS_PACKETS progress log period          (default 512)
+ *   NI_FILL_BANK_ID          1 or 2                                    (default 1)
+ *   NI_FILL_TOTAL_BYTES      total bytes; 0 = whole bank capacity      (default 0)
+ *   NI_FILL_SESSION_ID       observation session id of cycle 0         (default 1)
+ *   NI_FILL_DO_ERASE         0/1                                       (default 1)
+ *   NI_FILL_DO_WRITE         0/1                                       (default 1)
+ *   NI_FILL_DO_VERIFY        0/1 read back and byte-exact compare      (default 1)
+ *   NI_FILL_SPLIT_PACKET     0 = one write session; N = write [0, N), switch the
+ *                            bank off and on again, append [N, end)    (default 0)
+ *   NI_FILL_CYCLES           erase/write/verify cycles; cycle k writes session
+ *                            NI_FILL_SESSION_ID + k, so every cycle has new data (default 1)
+ *   NI_FILL_PREWARM          0/1 bad-block map prewarm read            (default 1)
+ *   NI_FILL_START_DELAY_MS   pause before touching NAND                (default 5000)
+ *   NI_FILL_PROGRESS_PACKETS progress log period                       (default 16384)
+ *
+ * Retention check after a full board power-off: run once with defaults, then flash
+ * the same build with NI_FILL_DO_ERASE=0, NI_FILL_DO_WRITE=0, power the board off,
+ * power it on again and read the verify result (session NI_FILL_SESSION_ID).
  *
  * Build:
  *   -DNATALIA_FIRMWARE_MAIN=tests/firmware/ni_fill_test.c
@@ -36,6 +50,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "board_api.h"
 #include "clock.h"
@@ -49,7 +64,7 @@
 #endif
 
 #ifndef NI_FILL_TOTAL_BYTES
-#define NI_FILL_TOTAL_BYTES (16UL * 1024UL * 1024UL)
+#define NI_FILL_TOTAL_BYTES 0UL
 #endif
 
 #ifndef NI_FILL_SESSION_ID
@@ -57,11 +72,31 @@
 #endif
 
 #ifndef NI_FILL_DO_ERASE
-#define NI_FILL_DO_ERASE 0
+#define NI_FILL_DO_ERASE 1
 #endif
 
 #ifndef NI_FILL_PREWARM
 #define NI_FILL_PREWARM 1
+#endif
+
+#ifndef NI_FILL_DO_WRITE
+#define NI_FILL_DO_WRITE 1
+#endif
+
+#ifndef NI_FILL_DO_VERIFY
+#define NI_FILL_DO_VERIFY 1
+#endif
+
+#ifndef NI_FILL_SPLIT_PACKET
+#define NI_FILL_SPLIT_PACKET 0UL
+#endif
+
+#ifndef NI_FILL_CYCLES
+#define NI_FILL_CYCLES 1U
+#endif
+
+#ifndef NI_FILL_VERIFY_LOG_MISMATCHES
+#define NI_FILL_VERIFY_LOG_MISMATCHES 8U
 #endif
 
 #ifndef NI_FILL_START_DELAY_MS
@@ -69,7 +104,7 @@
 #endif
 
 #ifndef NI_FILL_PROGRESS_PACKETS
-#define NI_FILL_PROGRESS_PACKETS 512U
+#define NI_FILL_PROGRESS_PACKETS 16384U
 #endif
 
 #define NI_PACKET_WORDS    1024U
@@ -88,18 +123,19 @@
 #define NI_OBSERVE_MODE    0x01U
 #define NI_COUNTERS_WORDS  15U
 
-#define NI_FILL_PACKET_COUNT (NI_FILL_TOTAL_BYTES / NI_PACKET_BYTES)
-
 #if (NI_FILL_TOTAL_BYTES % NI_PACKET_BYTES) != 0
 #error "NI_FILL_TOTAL_BYTES must be a multiple of 2048"
 #endif
 
-#if (NI_FILL_PACKET_COUNT == 0)
-#error "NI_FILL_TOTAL_BYTES must hold at least one packet"
+#if (NI_FILL_CYCLES < 1)
+#error "NI_FILL_CYCLES must be at least 1"
 #endif
 
 static uint8_t ni_packet[NI_PACKET_BYTES];
+static uint8_t ni_readback[NI_PACKET_BYTES];
 static uint32_t ni_format_number;
+static uint16_t ni_session_id;
+static uint32_t ni_packet_count;
 
 static void log_text(const char *text) {
     debug_log_write(text);
@@ -183,7 +219,7 @@ static uint16_t build_packet(uint32_t packet_index, uint16_t previous_crc) {
     put_word(0U, NI_MARKER_1);
     put_word(1U, NI_MARKER_2);
     put_word(2U, NI_MARKER_3);
-    put_word(3U, (uint16_t)NI_FILL_SESSION_ID);
+    put_word(3U, ni_session_id);
     put_word(4U, (uint16_t)(packet_index & 0xFFFFU));
     put_word(5U, (uint16_t)((packet_index >> 16) & 0xFFFFU));
     put_word(6U, previous_crc);
@@ -218,20 +254,10 @@ static void wait_erase_done(void) {
         }
     }
 }
+
 #endif
 
-static void wait_write_idle(void) {
-    uint8_t is_idle = 0U;
-    BoardStatus status;
-
-    while (is_idle == 0U) {
-        status = board_nand_write_poll((uint8_t)NI_FILL_BANK_ID, &is_idle);
-        if (status != BOARD_OK) {
-            fail("WRITE_POLL", status);
-        }
-    }
-}
-
+#if (NI_FILL_DO_WRITE != 0)
 static void wait_write_flush(void) {
     uint8_t is_done = 0U;
     BoardStatus status;
@@ -244,149 +270,304 @@ static void wait_write_flush(void) {
     }
 }
 
-int main(void) {
+#endif
+
+static void bank_up(void) {
+    uint8_t is_powered = 0U;
     BoardStatus status;
-    uint32_t packet_index;
-    uint16_t previous_crc = 0U;
-    uint32_t start_ms;
-    uint32_t elapsed_ms;
-    uint64_t bytes;
-    uint32_t bytes_per_second;
-
-    (void)clock_init();
-    (void)timebase_init();
-    (void)debug_log_init();
-
-    log_text("\r\nNI FILL TEST");
-    log_u32("bank", (uint32_t)NI_FILL_BANK_ID);
-    log_u32("total_bytes", (uint32_t)NI_FILL_TOTAL_BYTES);
-    log_u32("packets", (uint32_t)NI_FILL_PACKET_COUNT);
-    log_u32("session", (uint32_t)NI_FILL_SESSION_ID);
-
-    status = board_init_hardware();
-    log_u32("board_init_hardware", (uint32_t)status);
 
     status = board_nand_power_on((uint8_t)NI_FILL_BANK_ID);
     if (status != BOARD_OK) {
         fail("POWER_ON", status);
     }
 
+    status = board_nand_is_powered((uint8_t)NI_FILL_BANK_ID, &is_powered);
+    if ((status != BOARD_OK) || (is_powered == 0U)) {
+        fail("NOT_POWERED", status);
+    }
+
     status = board_nand_connect((uint8_t)NI_FILL_BANK_ID);
     if (status != BOARD_OK) {
         fail("CONNECT", status);
     }
+}
+
+static void scan_bad_blocks(void) {
+    uint8_t scan_done = 0U;
+    BoardStatus status;
 
     status = board_nand_bad_block_scan_start((uint8_t)NI_FILL_BANK_ID);
     if (status != BOARD_OK) {
         fail("SCAN_START", status);
     }
 
-    {
-        uint8_t scan_done = 0U;
-
-        while (scan_done == 0U) {
-            status = board_nand_bad_block_scan_poll((uint8_t)NI_FILL_BANK_ID, &scan_done);
-            if (status != BOARD_OK) {
-                fail("SCAN_POLL", status);
-            }
+    while (scan_done == 0U) {
+        status = board_nand_bad_block_scan_poll((uint8_t)NI_FILL_BANK_ID, &scan_done);
+        if (status != BOARD_OK) {
+            fail("SCAN_POLL", status);
         }
     }
+}
 
-    log_u32("start_delay_ms", (uint32_t)NI_FILL_START_DELAY_MS);
-    timebase_delay_ms_blocking((uint32_t)NI_FILL_START_DELAY_MS);
+#if (NI_FILL_DO_WRITE != 0)
+static void bank_power_cycle(void) {
+    static BoardNandBlockMap map;
+    BoardStatus status;
 
-    /*
-     * Прогрев карты плохих блоков.
-     *
-     * nand_storage определяет состояние блока лениво: при первом обращении к
-     * блоку он читает маркер прямо с микросхемы. Внутри цикла записи это
-     * происходит в тот момент, когда предыдущая страница ещё программируется по
-     * DMA, QSPI занят, чтение возвращает BOARD_ERR_BUSY, и слой ошибочно
-     * помечает банк как заполненный. Отказ приходит ровно на первом пакете
-     * следующего блока (пакет 64).
-     *
-     * Одно чтение последнего пакета заставляет слой пройти все нужные блоки и
-     * заполнить карту заранее, пока запись не идёт. После стирания карта и так
-     * прогрета, там этот шаг ничего не меняет.
-     */
-#if (NI_FILL_PREWARM != 0)
-    log_text("prewarm start");
-
-    status = board_nand_open_read((uint8_t)NI_FILL_BANK_ID,
-                                  (uint32_t)NI_FILL_PACKET_COUNT);
+    status = board_nand_get_block_map((uint8_t)NI_FILL_BANK_ID, &map);
     if (status != BOARD_OK) {
-        fail("PREWARM_OPEN_READ", status);
+        fail("GET_MAP", status);
     }
 
-    status = board_nand_read_packet((uint8_t)NI_FILL_BANK_ID,
-                                    (uint32_t)(NI_FILL_PACKET_COUNT - 1U),
-                                    ni_packet);
+    status = board_nand_disconnect((uint8_t)NI_FILL_BANK_ID);
     if (status != BOARD_OK) {
-        fail("PREWARM_READ", status);
+        fail("DISCONNECT", status);
     }
 
-    log_text("prewarm done");
-#endif
-
-#if (NI_FILL_DO_ERASE != 0)
-    log_text("erase start");
-    start_ms = timebase_millis();
-
-    status = board_nand_erase_start((uint8_t)NI_FILL_BANK_ID);
+    status = board_nand_power_off((uint8_t)NI_FILL_BANK_ID);
     if (status != BOARD_OK) {
-        fail("ERASE_START", status);
+        fail("POWER_OFF", status);
     }
 
-    wait_erase_done();
-    log_u32("erase_ms", (uint32_t)(timebase_millis() - start_ms));
-#endif
+    log_text("bank power off");
+    timebase_delay_ms_blocking(500U);
 
-    status = board_nand_open_write((uint8_t)NI_FILL_BANK_ID, 0U);
+    bank_up();
+    log_text("bank power on");
+
+    status = board_nand_set_block_map((uint8_t)NI_FILL_BANK_ID, &map);
+    if (status != BOARD_OK) {
+        fail("SET_MAP", status);
+    }
+}
+
+/* Packet content depends on everything before it (CRC chain, format numbers): replay up to first. */
+static uint16_t chain_state_at(uint32_t first) {
+    uint32_t packet_index;
+    uint16_t previous_crc = 0U;
+
+    ni_format_number = 0U;
+
+    for (packet_index = 0U; packet_index < first; ++packet_index) {
+        previous_crc = build_packet(packet_index, previous_crc);
+    }
+
+    return previous_crc;
+}
+
+static void write_range(uint32_t first, uint32_t end) {
+    uint32_t packet_index;
+    uint16_t previous_crc;
+    uint8_t is_idle = 0U;
+    BoardStatus status;
+
+    previous_crc = chain_state_at(first);
+
+    status = board_nand_open_write((uint8_t)NI_FILL_BANK_ID, first);
     if (status != BOARD_OK) {
         fail("OPEN_WRITE", status);
     }
 
-    log_text("write start");
-    start_ms = timebase_millis();
-
-    for (packet_index = 0U; packet_index < NI_FILL_PACKET_COUNT; ++packet_index) {
+    for (packet_index = first; packet_index < end; ++packet_index) {
         previous_crc = build_packet(packet_index, previous_crc);
 
-        status = board_nand_write_packet((uint8_t)NI_FILL_BANK_ID, ni_packet);
+        for (;;) {
+            status = board_nand_write_packet((uint8_t)NI_FILL_BANK_ID, ni_packet);
+            if (status != BOARD_ERR_BUSY) {
+                break;
+            }
+
+            status = board_nand_write_poll((uint8_t)NI_FILL_BANK_ID, &is_idle);
+            if (status != BOARD_OK) {
+                log_u32("failed_packet", packet_index);
+                fail("WRITE_POLL", status);
+            }
+        }
+
         if (status != BOARD_OK) {
             log_u32("failed_packet", packet_index);
             fail("WRITE_PACKET", status);
         }
 
-        wait_write_idle();
-
         if (((packet_index + 1U) % NI_FILL_PROGRESS_PACKETS) == 0U) {
-            debug_log_write("progress packets=");
-            debug_log_write_u32_inline(packet_index + 1U);
-            debug_log_write(" ms=");
-            debug_log_write_u32_inline((uint32_t)(timebase_millis() - start_ms));
-            debug_log_write("\r\n");
+            log_u32("write_packets", packet_index + 1U);
         }
     }
 
     wait_write_flush();
+}
 
-    elapsed_ms = (uint32_t)(timebase_millis() - start_ms);
-    bytes = (uint64_t)NI_FILL_PACKET_COUNT * (uint64_t)NI_PACKET_BYTES;
+#endif
 
-    if (elapsed_ms == 0U) {
-        bytes_per_second = 0U;
-    } else {
-        bytes_per_second = (uint32_t)((bytes * 1000ULL) / (uint64_t)elapsed_ms);
+#if (NI_FILL_DO_VERIFY != 0)
+static uint32_t first_diff_offset(void) {
+    uint32_t offset;
+
+    for (offset = 0U; offset < NI_PACKET_BYTES; ++offset) {
+        if (ni_packet[offset] != ni_readback[offset]) {
+            return offset;
+        }
     }
 
-    log_text("write done");
-    log_u32("packets", (uint32_t)NI_FILL_PACKET_COUNT);
-    log_u32("bytes", (uint32_t)bytes);
-    log_u32("ms", elapsed_ms);
-    log_u32("bytes_per_second", bytes_per_second);
-    log_u32("last_crc", (uint32_t)previous_crc);
-    log_text("NI FILL DONE");
+    return NI_PACKET_BYTES;
+}
+
+/* Returns the number of bad packets (mismatch or uncorrectable ECC). */
+static uint32_t verify_bank(void) {
+    uint32_t packet_index;
+    uint16_t previous_crc = 0U;
+    uint32_t bad_packets = 0U;
+    uint32_t ecc_packets = 0U;
+    uint32_t start_ms;
+    BoardStatus status;
+
+    status = board_nand_open_read((uint8_t)NI_FILL_BANK_ID, ni_packet_count);
+    if (status != BOARD_OK) {
+        fail("VERIFY_OPEN_READ", status);
+    }
+
+    start_ms = timebase_millis();
+    ni_format_number = 0U;
+
+    for (packet_index = 0U; packet_index < ni_packet_count; ++packet_index) {
+        previous_crc = build_packet(packet_index, previous_crc);
+
+        status = board_nand_read_packet((uint8_t)NI_FILL_BANK_ID, packet_index, ni_readback);
+        if (status == BOARD_ERR_CRC) {
+            ++ecc_packets;
+        } else if (status != BOARD_OK) {
+            log_u32("failed_packet", packet_index);
+            fail("VERIFY_READ", status);
+        }
+
+        if (memcmp(ni_packet, ni_readback, NI_PACKET_BYTES) != 0) {
+            if (bad_packets < NI_FILL_VERIFY_LOG_MISMATCHES) {
+                debug_log_write("mismatch packet=");
+                debug_log_write_u32_inline(packet_index);
+                debug_log_write(" offset=");
+                debug_log_write_u32_inline(first_diff_offset());
+                debug_log_write("\r\n");
+            }
+            ++bad_packets;
+        }
+
+        if (((packet_index + 1U) % NI_FILL_PROGRESS_PACKETS) == 0U) {
+            debug_log_write("verify_packets=");
+            debug_log_write_u32_inline(packet_index + 1U);
+            debug_log_write(" bad=");
+            debug_log_write_u32_inline(bad_packets);
+            debug_log_write("\r\n");
+        }
+    }
+
+    log_u32("verify_ms", (uint32_t)(timebase_millis() - start_ms));
+    log_u32("verify_bad_packets", bad_packets);
+    log_u32("verify_ecc_uncorrectable", ecc_packets);
+
+    return bad_packets + ecc_packets;
+}
+
+#endif
+
+int main(void) {
+    BoardStatus status;
+    uint32_t capacity = 0U;
+    uint32_t cycle;
+#if ((NI_FILL_DO_ERASE != 0) || (NI_FILL_DO_WRITE != 0))
+    uint32_t start_ms;
+#endif
+    uint32_t failed_cycles = 0U;
+
+    (void)clock_init();
+    (void)timebase_init();
+    (void)debug_log_init();
+
+    log_u32("start_delay_ms", (uint32_t)NI_FILL_START_DELAY_MS);
+    timebase_delay_ms_blocking((uint32_t)NI_FILL_START_DELAY_MS);
+
+    log_text("\r\nNI FILL TEST");
+    log_u32("bank", (uint32_t)NI_FILL_BANK_ID);
+    log_u32("do_erase", (uint32_t)NI_FILL_DO_ERASE);
+    log_u32("do_write", (uint32_t)NI_FILL_DO_WRITE);
+    log_u32("do_verify", (uint32_t)NI_FILL_DO_VERIFY);
+    log_u32("split_packet", (uint32_t)NI_FILL_SPLIT_PACKET);
+    log_u32("cycles", (uint32_t)NI_FILL_CYCLES);
+    log_u32("session", (uint32_t)NI_FILL_SESSION_ID);
+
+    status = board_init_hardware();
+    log_u32("board_init_hardware", (uint32_t)status);
+
+    bank_up();
+    scan_bad_blocks();
+
+    status = board_nand_get_capacity_packets((uint8_t)NI_FILL_BANK_ID, &capacity);
+    if (status != BOARD_OK) {
+        fail("CAPACITY", status);
+    }
+
+    ni_packet_count = (NI_FILL_TOTAL_BYTES == 0UL) ? capacity
+                                                   : (uint32_t)(NI_FILL_TOTAL_BYTES / NI_PACKET_BYTES);
+    log_u32("capacity_packets", capacity);
+    log_u32("packets", ni_packet_count);
+    if ((ni_packet_count == 0U) || (ni_packet_count > capacity) ||
+        ((uint32_t)NI_FILL_SPLIT_PACKET >= ni_packet_count)) {
+        fail("PACKET_COUNT", BOARD_ERR_INVALID_ARG);
+    }
+
+#if (NI_FILL_PREWARM != 0)
+    status = board_nand_open_read((uint8_t)NI_FILL_BANK_ID, ni_packet_count);
+    if (status == BOARD_OK) {
+        status = board_nand_read_packet((uint8_t)NI_FILL_BANK_ID, ni_packet_count - 1U, ni_readback);
+    }
+    if ((status != BOARD_OK) && (status != BOARD_ERR_CRC)) {
+        fail("PREWARM", status);
+    }
+#endif
+
+    for (cycle = 0U; cycle < (uint32_t)NI_FILL_CYCLES; ++cycle) {
+        uint32_t bad = 0U;
+
+        ni_session_id = (uint16_t)((uint32_t)NI_FILL_SESSION_ID + cycle);
+        log_u32("cycle", cycle);
+        log_u32("cycle_session", (uint32_t)ni_session_id);
+
+#if (NI_FILL_DO_ERASE != 0)
+        start_ms = timebase_millis();
+        status = board_nand_erase_start((uint8_t)NI_FILL_BANK_ID);
+        if (status != BOARD_OK) {
+            fail("ERASE_START", status);
+        }
+        wait_erase_done();
+        log_u32("erase_ms", (uint32_t)(timebase_millis() - start_ms));
+#endif
+
+#if (NI_FILL_DO_WRITE != 0)
+        start_ms = timebase_millis();
+        if ((uint32_t)NI_FILL_SPLIT_PACKET != 0U) {
+            write_range(0U, (uint32_t)NI_FILL_SPLIT_PACKET);
+            log_u32("session_1_packets", (uint32_t)NI_FILL_SPLIT_PACKET);
+            bank_power_cycle();
+            write_range((uint32_t)NI_FILL_SPLIT_PACKET, ni_packet_count);
+        } else {
+            write_range(0U, ni_packet_count);
+        }
+        log_u32("write_ms", (uint32_t)(timebase_millis() - start_ms));
+#endif
+
+#if (NI_FILL_DO_VERIFY != 0)
+        bad = verify_bank();
+#endif
+
+        if (bad != 0U) {
+            ++failed_cycles;
+            log_text("CYCLE FAILED");
+        } else {
+            log_text("CYCLE OK");
+        }
+    }
+
+    log_u32("failed_cycles", failed_cycles);
+    log_text((failed_cycles == 0U) ? "NI FILL: ALL OK" : "NI FILL: FAILED");
 
     halt();
 

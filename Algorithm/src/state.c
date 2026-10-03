@@ -38,6 +38,17 @@ static void enter_alarm(SystemContext* ctx) {
     (void)action_send_status(ctx);
 }
 
+static SystemState finish_mode(SystemContext* ctx) {
+    if (is_alarm_active(ctx)) {
+        enter_alarm(ctx);
+    } else {
+        transition_to(ctx, STATE_DUTY);
+        (void)action_send_status(ctx);
+    }
+
+    return ctx->state;
+}
+
 static SystemState finish_command_transition(SystemContext* ctx,
                                              const SystemEvent* event,
                                              ActionResult result,
@@ -244,23 +255,19 @@ static SystemState handle_erase_event(SystemContext* ctx, const SystemEvent* eve
     switch (event->type) {
     // 200
     case EVENT_ERASE_DONE:
-        result = action_update_nand_state(ctx);
-        if (result == ACTION_OK) {
-            result = action_clear_nand_full_flag(ctx);
+        if (ctx->erase.operation_failed) {
+            if (!is_alarm_active(ctx)) {
+                action_set_alarm(ctx, ALARM_NAND_PR);
+            }
+        } else {
+            (void)action_update_nand_state(ctx);
+            (void)action_clear_nand_full_flag(ctx);
+            if (action_update_erase_service_data(ctx) != ACTION_OK) {
+                action_set_alarm(ctx, ALARM_MRAM);
+            }
         }
-        if (result == ACTION_OK) {
-            result = action_update_erase_service_data(ctx);
-        }
-        if (result == ACTION_OK) {
-            result = action_finish_erase(ctx, event);
-        }
-        if (result == ACTION_OK) {
-            transition_to(ctx, STATE_DUTY);
-            (void)action_send_status(ctx);
-        } else if (result == ACTION_ALARM) {
-            enter_alarm(ctx);
-        }
-        return ctx->state;
+        (void)action_finish_erase(ctx, event);
+        return finish_mode(ctx);
 
     // 201
     case EVENT_CMD_STATUS_REQ:
@@ -325,20 +332,15 @@ static SystemState handle_test_event(SystemContext* ctx, const SystemEvent* even
     switch (event->type) {
     // 300
     case EVENT_TEST_DONE:
-        result = action_update_test_results(ctx);
-        if ((result == ACTION_OK) && ctx->test.result_valid) {
-            result = action_update_test_service_data(ctx);
+        if (ctx->test.operation_failed && !is_alarm_active(ctx)) {
+            action_set_alarm(ctx, ALARM_NAND_PR);
         }
-        if (result == ACTION_OK) {
-            result = action_finish_test(ctx, event);
+        (void)action_update_test_results(ctx);
+        if (ctx->test.result_valid && (action_update_test_service_data(ctx) != ACTION_OK)) {
+            action_set_alarm(ctx, ALARM_MRAM);
         }
-        if (result == ACTION_OK) {
-            transition_to(ctx, STATE_DUTY);
-            (void)action_send_status(ctx);
-        } else if (result == ACTION_ALARM) {
-            enter_alarm(ctx);
-        }
-        return ctx->state;
+        (void)action_finish_test(ctx, event);
+        return finish_mode(ctx);
 
     // 301
     case EVENT_CMD_STATUS_REQ:
@@ -503,17 +505,22 @@ static SystemState handle_dump_event(SystemContext* ctx, const SystemEvent* even
     switch (event->type) {
     // 500
     case EVENT_DUMP_DONE:
-        result = action_fix_dump_results(ctx);
-        if (result == ACTION_OK) {
-            result = action_update_dump_service_data(ctx);
+        if (ctx->dump.operation_failed) {
+            if (!is_alarm_active(ctx)) {
+                action_set_alarm(ctx, ALARM_NAND_PR);
+            }
+        } else {
+            (void)action_fix_dump_results(ctx);
         }
-        if (result == ACTION_OK) {
-            result = action_finish_dump(ctx, event);
+        if (action_update_dump_service_data(ctx) != ACTION_OK) {
+            action_set_alarm(ctx, ALARM_MRAM);
         }
-        if (result == ACTION_OK) {
-            transition_to(ctx, STATE_DUTY);
-            (void)action_send_status(ctx);
-        } else if (result == ACTION_ALARM) {
+        (void)action_finish_dump(ctx, event);
+        return finish_mode(ctx);
+
+    case EVENT_RTC_1HZ:
+        if (action_dump_tx_watchdog(ctx) == ACTION_ALARM) {
+            (void)action_finish_dump_alarm(ctx);
             enter_alarm(ctx);
         }
         return ctx->state;

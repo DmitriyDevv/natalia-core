@@ -21,6 +21,10 @@ static uint8_t nand_program_dma_busy_seen = 0U;
 static uint8_t nand_program_dma_unconfirmed = 0U;
 static uint32_t nand_program_dma_execute_cycles = 0U;
 
+static BoardStatus require_program_idle(void) {
+    return (nand_program_dma_state == NAND_PROGRAM_DMA_IDLE) ? BOARD_OK : BOARD_ERR_BUSY;
+}
+
 static uint32_t make_row_address(uint32_t block, uint32_t page) {
     return (block * NAND_MT29F_PAGES_PER_BLOCK) + page;
 }
@@ -216,6 +220,11 @@ BoardStatus nand_mt29f_init(void) {
     uint32_t attempt;
     BoardStatus status;
 
+    status = require_program_idle();
+    if (status != BOARD_OK) {
+        return status;
+    }
+
     status = nand_mt29f_reset();
     if (status != BOARD_OK) {
         return status;
@@ -242,6 +251,11 @@ BoardStatus nand_mt29f_erase_block(uint32_t block) {
     uint32_t row_address;
 
     status = validate_block(block);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = require_program_idle();
     if (status != BOARD_OK) {
         return status;
     }
@@ -290,6 +304,11 @@ BoardStatus nand_mt29f_program_page(uint32_t block,
 
     if (size == 0U) {
         return BOARD_OK;
+    }
+
+    status = require_program_idle();
+    if (status != BOARD_OK) {
+        return status;
     }
 
     row_address = make_row_address(block, page);
@@ -358,6 +377,11 @@ BoardStatus nand_mt29f_read_page_at(uint32_t block,
         return BOARD_OK;
     }
 
+    status = require_program_idle();
+    if (status != BOARD_OK) {
+        return status;
+    }
+
     row_address = make_row_address(block, page);
 
     command = nand_mt29f_make_page_read_command(row_address);
@@ -376,7 +400,12 @@ BoardStatus nand_mt29f_read_page_at(uint32_t block,
 
     command = nand_mt29f_make_read_cache_command(column);
 
-    return qspi_read(&command, buffer, size);
+    status = qspi_read(&command, buffer, size);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    return (nand_last_ecc_status == NAND_ECC_STATUS_UNCORRECTABLE) ? BOARD_ERR_CRC : BOARD_OK;
 }
 
 uint8_t nand_mt29f_get_last_ecc_status(void) {
@@ -398,6 +427,11 @@ BoardStatus nand_mt29f_is_block_bad(uint32_t block, uint8_t* is_bad) {
     }
 
     status = validate_block(block);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = require_program_idle();
     if (status != BOARD_OK) {
         return status;
     }

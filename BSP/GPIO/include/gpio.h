@@ -59,6 +59,8 @@ BoardStatus gpio_set_disconnected(BoardPinId id);
 
 BoardStatus gpio_falling_edge_irq_enable(BoardPinId id);
 
+BoardStatus gpio_rising_edge_irq_enable(BoardPinId id);
+
 BoardStatus gpio_falling_edge_irq_disable(BoardPinId id);
 
 BoardStatus gpio_falling_edge_irq_take(BoardPinId id, uint8_t *triggered);

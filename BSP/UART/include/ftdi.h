@@ -13,6 +13,10 @@ typedef enum {
 
 BoardStatus ftdi_init(void);
 
+BoardStatus ftdi_deinit(void);
+
+uint8_t ftdi_is_initialized(void);
+
 void ftdi_set_mode(FtdiMode mode);
 
 FtdiMode ftdi_get_mode(void);

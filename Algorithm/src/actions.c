@@ -104,6 +104,18 @@ static ActionResult maybe_power_off_nand(SystemContext* ctx, NandBank bank, Powe
     return ACTION_OK;
 }
 
+static ActionResult release_nand_bank(SystemContext* ctx, NandBank bank, PowerAfterDone power_after_done) {
+    ActionResult disconnect_result = disconnect_nand_if_needed(ctx, bank);
+    ActionResult power_result = maybe_power_off_nand(ctx, bank, power_after_done);
+
+    if ((disconnect_result != ACTION_OK) || (power_result != ACTION_OK)) {
+        alarm_set(ctx, ALARM_NAND_PR);
+        return ACTION_ALARM;
+    }
+
+    return ACTION_OK;
+}
+
 static ActionResult disconnect_signal_line(BoardSignalTarget target) {
     return require_ok(board_disconnect_signal_lines(target));
 }
@@ -825,6 +837,8 @@ ActionResult action_start_test(SystemContext* ctx, const SystemEvent* event) {
 ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
     NandBank bank;
     uint8_t is_ready = 0U;
+    uint8_t link_present = 0U;
+    uint8_t link_fault = 0U;
     uint32_t start_packet;
     uint32_t packet_count;
     uint32_t read_limit_packets;
@@ -847,6 +861,29 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
     if ((event->command.dump.start_address % DUMP_MODE_PACKET_SIZE) != 0U) {
         return ACTION_ERR_CONTENT;
     }
+
+    result = require_ok(board_data_link_present(&link_present));
+    if (result != ACTION_OK) {
+        ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+        return result;
+    }
+
+    if (link_present == 0U) {
+        alarm_set(ctx, ALARM_USB_VBUS);
+        if (ctx->masked_alarm != 0U) {
+            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+            return ACTION_ALARM;
+        }
+    }
+
+    if (require_ok(board_data_link_open()) != ACTION_OK) {
+        alarm_set(ctx, ALARM_USB_PR);
+        (void)board_data_link_close();
+        ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+        return ACTION_ALARM;
+    }
+
+    (void)board_data_link_take_fault(&link_fault);
 
     result = require_ok(board_data_is_ready(&is_ready));
     if (result != ACTION_OK) {
@@ -871,6 +908,9 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
     ctx->dump.packet_size = 0U;
     ctx->dump.send_offset = 0U;
     ctx->dump.usb_retry_count = 0U;
+    ctx->dump.tx_watch_bytes = 0U;
+    ctx->dump.tx_stall_seconds = 0U;
+    ctx->dump.tx_attempted = false;
     (void)memset(ctx->dump.packet_buffer, 0, sizeof(ctx->dump.packet_buffer));
     ctx->dump.operation_failed = false;
     ctx->dump.finish_requested = false;
@@ -1047,13 +1087,7 @@ ActionResult action_finish_erase(SystemContext* ctx, const SystemEvent* event) {
         ctx->erase.finish_requested = true;
     }
 
-    result = disconnect_nand_if_needed(ctx, ctx->erase.bank);
-    if (result != ACTION_OK) {
-        ctx->erase.stage = ERASE_STAGE_FINISH_ALARM;
-        return result;
-    }
-
-    result = maybe_power_off_nand(ctx, ctx->erase.bank, ctx->erase.power_after_done);
+    result = release_nand_bank(ctx, ctx->erase.bank, ctx->erase.power_after_done);
     if (result != ACTION_OK) {
         ctx->erase.stage = ERASE_STAGE_FINISH_ALARM;
         return result;
@@ -1232,13 +1266,7 @@ ActionResult action_finish_test(SystemContext* ctx, const SystemEvent* event) {
         ctx->test.result_valid = false;
     }
 
-    result = disconnect_nand_if_needed(ctx, ctx->test.bank);
-    if (result != ACTION_OK) {
-        ctx->test.stage = TEST_STAGE_FINISH_ALARM;
-        return result;
-    }
-
-    result = maybe_power_off_nand(ctx, ctx->test.bank, ctx->test.power_after_done);
+    result = release_nand_bank(ctx, ctx->test.bank, ctx->test.power_after_done);
     if (result != ACTION_OK) {
         ctx->test.stage = TEST_STAGE_FINISH_ALARM;
         return result;
@@ -1271,6 +1299,9 @@ ActionResult action_update_test_results(SystemContext* ctx) {
     result.bank = (uint8_t)ctx->test.bank;
     (void)memcpy(result.nerr, ctx->test.nerr, sizeof(result.nerr));
     save_result = board_status_to_action(mram_store_save_test_result(&result));
+    if (save_result != ACTION_OK) {
+        alarm_set(ctx, ALARM_MRAM);
+    }
     if ((save_result == ACTION_OK) && !ctx->test.operation_failed) {
         ctx->test.result_valid = true;
     } else {
@@ -1474,6 +1505,7 @@ ActionResult action_finish_observe_alarm(SystemContext* ctx) {
 
 ActionResult action_finish_dump(SystemContext* ctx, const SystemEvent* event) {
     size_t bytes_written = 0U;
+    ActionResult flush_result;
     ActionResult result;
 
     if (ctx == NULL) {
@@ -1485,23 +1517,19 @@ ActionResult action_finish_dump(SystemContext* ctx, const SystemEvent* event) {
         ctx->dump.finish_target_state = (event->type == EVENT_CMD_SHUTDOWN) ? STATE_SHUTDOWN : STATE_DUTY;
     }
 
-    result = require_ok(board_usb_write(NULL, 0U, &bytes_written));
-    if (result != ACTION_OK) {
-        ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-        return result;
-    }
-    ctx->usb.bytes_written += (uint32_t)bytes_written;
-
-    result = disconnect_nand_if_needed(ctx, ctx->dump.bank);
-    if (result != ACTION_OK) {
-        ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-        return result;
+    flush_result = require_ok(board_data_write(NULL, 0U, &bytes_written));
+    if (flush_result == ACTION_OK) {
+        ctx->usb.bytes_written += (uint32_t)bytes_written;
+    } else {
+        alarm_set(ctx, ALARM_USB_PR);
     }
 
-    result = maybe_power_off_nand(ctx, ctx->dump.bank, ctx->dump.power_after_done);
-    if (result != ACTION_OK) {
+    (void)board_data_link_close();
+
+    result = release_nand_bank(ctx, ctx->dump.bank, ctx->dump.power_after_done);
+    if ((result != ACTION_OK) || (flush_result != ACTION_OK)) {
         ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-        return result;
+        return ACTION_ALARM;
     }
 
     ctx->dump.stage = ctx->dump.finish_requested ? DUMP_STAGE_FINISH_CMD : DUMP_STAGE_FINISH_OK;
@@ -1512,6 +1540,7 @@ ActionResult action_finish_dump_alarm(SystemContext* ctx) {
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
     }
+    (void)board_data_link_close();
     ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
     return disconnect_nand_if_needed(ctx, ctx->dump.bank);
 }
@@ -1541,4 +1570,44 @@ ActionResult action_mark_alarm_exit(SystemContext* ctx) {
         return ACTION_ERR_CONTENT;
     }
     return ACTION_OK;
+}
+
+void action_set_alarm(SystemContext* ctx, uint32_t bit) {
+    alarm_set(ctx, bit);
+}
+
+ActionResult action_dump_tx_watchdog(SystemContext* ctx) {
+    uint32_t progress;
+
+    if (ctx == NULL) {
+        return ACTION_ERR_CONTENT;
+    }
+
+    if (ctx->dump.stage != DUMP_STAGE_SEND) {
+        ctx->dump.tx_stall_seconds = 0U;
+        ctx->dump.tx_attempted = false;
+        return ACTION_OK;
+    }
+
+    progress = ctx->dump.bytes_done + ctx->dump.send_offset;
+    if (progress != ctx->dump.tx_watch_bytes) {
+        ctx->dump.tx_watch_bytes = progress;
+        ctx->dump.tx_stall_seconds = 0U;
+        ctx->dump.tx_attempted = false;
+        return ACTION_OK;
+    }
+
+    if (!ctx->dump.tx_attempted) {
+        return ACTION_OK;
+    }
+
+    ctx->dump.tx_attempted = false;
+    ++ctx->dump.tx_stall_seconds;
+    if (ctx->dump.tx_stall_seconds < DUMP_MODE_TX_TIMEOUT_S) {
+        return ACTION_OK;
+    }
+
+    ctx->dump.operation_failed = true;
+    alarm_set(ctx, ALARM_USB_PR);
+    return ACTION_ALARM;
 }

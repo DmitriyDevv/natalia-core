@@ -16,6 +16,8 @@ typedef struct {
     FakeHalf halves[FAKE_HALF_COUNT];
     uint8_t factory_bad[NAND_MT29F_BLOCKS_PER_LUN];
     uint8_t erase_ignored[NAND_MT29F_BLOCKS_PER_LUN];
+    uint8_t erase_silent[NAND_MT29F_BLOCKS_PER_LUN];
+    uint8_t read_uncorrectable[NAND_MT29F_BLOCKS_PER_LUN];
     uint8_t erase_fails[NAND_MT29F_BLOCKS_PER_LUN];
     uint8_t program_fails[NAND_MT29F_BLOCKS_PER_LUN];
 } FakeBank;
@@ -122,6 +124,14 @@ void fake_nand_set_erase_ignored(uint8_t bank_id, uint32_t block) {
     fake_banks[bank_id - 1U].erase_ignored[block] = 1U;
 }
 
+void fake_nand_set_erase_silent(uint8_t bank_id, uint32_t block) {
+    fake_banks[bank_id - 1U].erase_silent[block] = 1U;
+}
+
+void fake_nand_set_read_uncorrectable(uint8_t bank_id, uint32_t block) {
+    fake_banks[bank_id - 1U].read_uncorrectable[block] = 1U;
+}
+
 void fake_nand_set_program_fail(uint8_t bank_id, uint32_t block) {
     fake_banks[bank_id - 1U].program_fails[block] = 1U;
 }
@@ -201,6 +211,10 @@ BoardStatus nand_mt29f_erase_block(uint32_t block) {
         return fake_fault(NAND_MT29F_FAULT_ERASE_FAIL, FAKE_STATUS_ERASE_FAIL, BOARD_ERR_IO);
     }
 
+    if (bank->erase_silent[block] != 0U) {
+        return BOARD_OK;
+    }
+
     for (half = 0U; half < FAKE_HALVES_PER_BLOCK; ++half) {
         bank->halves[(block * FAKE_HALVES_PER_BLOCK) + half].written = 0U;
         bank->halves[(block * FAKE_HALVES_PER_BLOCK) + half].overwritten = 0U;
@@ -224,7 +238,7 @@ BoardStatus nand_mt29f_read_page_at(uint32_t block,
     ++fake_stats.read_calls;
     fake_render_half(&fake_bank()->halves[fake_half_index(block, page, column)], buffer, size);
 
-    return BOARD_OK;
+    return (fake_bank()->read_uncorrectable[block] != 0U) ? BOARD_ERR_CRC : BOARD_OK;
 }
 
 BoardStatus nand_mt29f_program_page_dma_start_at(uint32_t block,

@@ -139,7 +139,7 @@ BoardStatus board_init_hardware(void) {
 #if defined(NATALIA_ENABLE_NAND_DRIVER)
     board_nand_storage_initialized = 0U;
     board_nand_active_bank_id = 0U;
-    board_nand_power_state_reset(0U);
+    board_nand_power_state_reset(1U);
 #endif
 
 #if defined(NATALIA_ENABLE_INA219_DRIVER) && (NATALIA_ENABLE_INA219_DRIVER != 0)
@@ -184,13 +184,6 @@ BoardStatus board_init_hardware(void) {
     }
 #endif
 
-#if defined(NATALIA_ENABLE_FTDI_DRIVER) && (NATALIA_ENABLE_FTDI_DRIVER != 0)
-    status = ftdi_init();
-    if (status != BOARD_OK) {
-        return status;
-    }
-#endif
-
     return BOARD_OK;
 }
 
@@ -205,6 +198,16 @@ BoardStatus board_enter_safe_config(void) {
 #endif
 
     status = board_startup_io_init();
+
+#if defined(NATALIA_ENABLE_MRAM_DRIVER) && (NATALIA_ENABLE_MRAM_DRIVER != 0)
+    if (status == BOARD_OK) {
+        status = mram_init(MRAM_BANK_1);
+    }
+
+    if (status == BOARD_OK) {
+        status = mram_init(MRAM_BANK_2);
+    }
+#endif
 
 #if defined(NATALIA_ENABLE_NAND_DRIVER)
     board_nand_storage_initialized = 0U;
@@ -868,6 +871,27 @@ static BoardStatus board_nand_require_active(uint8_t bank_id) {
 }
 #endif
 
+static BoardStatus board_nand_park_ncs(uint8_t bank_id, BoardPinId ncs_pin) {
+#if defined(NATALIA_ENABLE_NAND_DRIVER)
+    static const GpioConfig ncs_deselected_config = {
+        .mode = GPIO_MODE_INPUT,
+        .pull = GPIO_PULL_UP,
+        .output_type = GPIO_OUTPUT_PUSH_PULL,
+        .speed = GPIO_SPEED_LOW,
+        .initial_level = GPIO_LEVEL_HIGH
+    };
+
+    if (((bank_id == 1U) || (bank_id == 2U)) &&
+        (board_nand_power_requested[bank_id - 1U] != 0U)) {
+        return gpio_configure(ncs_pin, &ncs_deselected_config);
+    }
+#else
+    (void)bank_id;
+#endif
+
+    return gpio_set_disconnected(ncs_pin);
+}
+
 static BoardStatus board_nand_disconnect_pins(uint8_t bank_id) {
     BoardStatus status;
 
@@ -881,7 +905,7 @@ static BoardStatus board_nand_disconnect_pins(uint8_t bank_id) {
             return status;
         }
 
-        status = gpio_set_disconnected(BOARD_PIN_QSPI_BK1_NCS);
+        status = board_nand_park_ncs(bank_id, BOARD_PIN_QSPI_BK1_NCS);
         if (status != BOARD_OK) {
             return status;
         }
@@ -910,7 +934,7 @@ static BoardStatus board_nand_disconnect_pins(uint8_t bank_id) {
             return status;
         }
 
-        status = gpio_set_disconnected(BOARD_PIN_QSPI_BK2_NCS);
+        status = board_nand_park_ncs(bank_id, BOARD_PIN_QSPI_BK2_NCS);
         if (status != BOARD_OK) {
             return status;
         }
@@ -1052,7 +1076,7 @@ BoardStatus board_nand_power_off(uint8_t bank_id) {
     board_nand_storage_initialized = 0U;
     board_nand_active_bank_id = 0U;
 
-    return BOARD_OK;
+    return board_nand_disconnect_pins(bank_id);
 #endif
 }
 
@@ -2343,6 +2367,131 @@ BoardStatus board_data_write(const void* buffer, size_t size, size_t* bytes_writ
 
 BoardStatus board_data_is_ready(uint8_t* is_ready) {
     return board_usb_is_ready(is_ready);
+}
+
+#endif
+
+#if (defined(NATALIA_ENABLE_FTDI_DRIVER) && (NATALIA_ENABLE_FTDI_DRIVER != 0)) || \
+    (defined(NATALIA_ENABLE_USB_DEVICE_DRIVER) && (NATALIA_ENABLE_USB_DEVICE_DRIVER != 0) && \
+     (!defined(NATALIA_ENABLE_BOARD_TEST_HOOKS) || (NATALIA_ENABLE_BOARD_TEST_HOOKS == 0)))
+
+#define BOARD_DATA_LINK_FLUSH_MS (50UL)
+
+BoardStatus board_data_link_present(uint8_t* present) {
+    GpioLevel level = GPIO_LEVEL_HIGH;
+    BoardStatus status;
+
+    if (present == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *present = 0U;
+
+    status = gpio_read(BOARD_PIN_PU_USB_VBUS, &level);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    *present = (level == GPIO_LEVEL_LOW) ? 1U : 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_data_link_take_fault(uint8_t* fault) {
+    if (fault == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    return gpio_falling_edge_irq_take(BOARD_PIN_PU_USB_VBUS, fault);
+}
+
+BoardStatus board_data_link_open(void) {
+    BoardStatus status = BOARD_OK;
+
+#if defined(NATALIA_ENABLE_FTDI_DRIVER) && (NATALIA_ENABLE_FTDI_DRIVER != 0)
+    if (ftdi_is_initialized() == 0U) {
+        status = ftdi_init();
+    }
+#endif
+
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    return gpio_rising_edge_irq_enable(BOARD_PIN_PU_USB_VBUS);
+}
+
+BoardStatus board_data_link_close(void) {
+    (void)gpio_falling_edge_irq_disable(BOARD_PIN_PU_USB_VBUS);
+
+#if defined(NATALIA_ENABLE_FTDI_DRIVER) && (NATALIA_ENABLE_FTDI_DRIVER != 0)
+    if (ftdi_is_initialized() != 0U) {
+        (void)ftdi_flush(BOARD_DATA_LINK_FLUSH_MS);
+    }
+    return ftdi_deinit();
+#else
+    return BOARD_OK;
+#endif
+}
+
+#elif defined(NATALIA_ENABLE_BOARD_TEST_HOOKS) && (NATALIA_ENABLE_BOARD_TEST_HOOKS != 0)
+
+BoardStatus board_data_link_present(uint8_t* present) {
+    if (present == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *present = 1U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_data_link_take_fault(uint8_t* fault) {
+    if (fault == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *fault = 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_data_link_open(void) {
+    return BOARD_OK;
+}
+
+BoardStatus board_data_link_close(void) {
+    return BOARD_OK;
+}
+
+#else
+
+BoardStatus board_data_link_present(uint8_t* present) {
+    if (present == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *present = 0U;
+
+    return BOARD_ERR_UNSUPPORTED;
+}
+
+BoardStatus board_data_link_take_fault(uint8_t* fault) {
+    if (fault == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *fault = 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_data_link_open(void) {
+    return BOARD_ERR_UNSUPPORTED;
+}
+
+BoardStatus board_data_link_close(void) {
+    return BOARD_OK;
 }
 
 #endif

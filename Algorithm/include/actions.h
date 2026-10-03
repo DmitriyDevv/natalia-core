@@ -108,4 +108,8 @@ ActionResult action_clear_alarm_status(SystemContext* ctx);
 
 ActionResult action_mark_alarm_exit(SystemContext* ctx);
 
+void action_set_alarm(SystemContext* ctx, uint32_t bit);
+
+ActionResult action_dump_tx_watchdog(SystemContext* ctx);
+
 #endif //NATALIA_CORE_ACTION_H

@@ -47,6 +47,7 @@ typedef struct {
     uint32_t erase_skipped_bad_blocks;
     uint32_t erase_failed_blocks;
     uint32_t erase_error_blocks;
+    uint32_t erase_verify_failed_blocks;
     uint32_t program_done;
     uint32_t program_unconfirmed;
     uint32_t scan_next_block;

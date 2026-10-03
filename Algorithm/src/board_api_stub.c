@@ -34,6 +34,14 @@ static uint8_t board_stub_nand_map_valid[BOARD_STUB_NAND_BANK_COUNT];
 static uint8_t board_stub_nand_factory_bad[BOARD_STUB_NAND_BANK_COUNT][BOARD_NAND_BLOCK_MAP_BYTES];
 static uint32_t board_stub_nand_scans[BOARD_STUB_NAND_BANK_COUNT];
 static uint32_t board_stub_nand_write_fail_at[BOARD_STUB_NAND_BANK_COUNT];
+static BoardStatus board_stub_nand_erase_status[BOARD_STUB_NAND_BANK_COUNT];
+static BoardStatus board_stub_nand_read_status[BOARD_STUB_NAND_BANK_COUNT];
+static BoardStatus board_stub_data_write_status;
+static BoardStatus board_stub_data_flush_status;
+static uint8_t board_stub_data_write_stalled;
+static uint8_t board_stub_data_link_present = 1U;
+static uint8_t board_stub_data_link_fault;
+static uint8_t board_stub_data_link_opened;
 static BoardNandBlockMap board_stub_mram_block_map[BOARD_STUB_MRAM_COPY_COUNT][2];
 static uint8_t board_stub_mram_block_map_valid[BOARD_STUB_MRAM_COPY_COUNT][2];
 
@@ -184,6 +192,42 @@ void board_stub_set_nand_factory_bad_block(uint8_t bank_id, uint32_t block) {
     }
 }
 
+void board_stub_set_nand_erase_status(uint8_t bank_id, BoardStatus status) {
+    if ((bank_id == 1U) || (bank_id == 2U)) {
+        board_stub_nand_erase_status[bank_id - 1U] = status;
+    }
+}
+
+void board_stub_set_nand_read_status(uint8_t bank_id, BoardStatus status) {
+    if ((bank_id == 1U) || (bank_id == 2U)) {
+        board_stub_nand_read_status[bank_id - 1U] = status;
+    }
+}
+
+void board_stub_set_data_write_status(BoardStatus status) {
+    board_stub_data_write_status = status;
+}
+
+void board_stub_set_data_flush_status(BoardStatus status) {
+    board_stub_data_flush_status = status;
+}
+
+void board_stub_set_data_write_stalled(bool stalled) {
+    board_stub_data_write_stalled = stalled ? 1U : 0U;
+}
+
+void board_stub_set_data_link_present(bool present) {
+    board_stub_data_link_present = present ? 1U : 0U;
+}
+
+void board_stub_set_data_link_fault(void) {
+    board_stub_data_link_fault = 1U;
+}
+
+bool board_stub_data_link_is_open(void) {
+    return board_stub_data_link_opened != 0U;
+}
+
 void board_stub_set_nand_write_fail_at(uint8_t bank_id, uint32_t packet_index) {
     if ((bank_id == 1U) || (bank_id == 2U)) {
         board_stub_nand_write_fail_at[bank_id - 1U] = packet_index;
@@ -266,6 +310,16 @@ void board_stub_reset_all(void) {
     (void)memset(board_stub_nand_scans, 0, sizeof(board_stub_nand_scans));
     board_stub_nand_write_fail_at[0] = UINT32_MAX;
     board_stub_nand_write_fail_at[1] = UINT32_MAX;
+    board_stub_nand_erase_status[0] = BOARD_OK;
+    board_stub_nand_erase_status[1] = BOARD_OK;
+    board_stub_nand_read_status[0] = BOARD_OK;
+    board_stub_nand_read_status[1] = BOARD_OK;
+    board_stub_data_write_status = BOARD_OK;
+    board_stub_data_flush_status = BOARD_OK;
+    board_stub_data_write_stalled = 0U;
+    board_stub_data_link_present = 1U;
+    board_stub_data_link_fault = 0U;
+    board_stub_data_link_opened = 0U;
     (void)memset(board_stub_mram_block_map, 0, sizeof(board_stub_mram_block_map));
     (void)memset(board_stub_mram_block_map_valid, 0, sizeof(board_stub_mram_block_map_valid));
 
@@ -913,7 +967,7 @@ BoardStatus board_nand_read_packet(uint8_t bank_id, uint32_t packet_index, void 
                  &board_stub_nand[bank_index][offset],
                  BOARD_STUB_NAND_PACKET_SIZE);
 
-    return BOARD_OK;
+    return board_stub_nand_read_status[bank_index];
 }
 
 BoardStatus board_nand_read_next_packet(uint8_t bank_id, void *packet, uint8_t *has_packet) {
@@ -1169,11 +1223,9 @@ BoardStatus board_nand_erase_is_done(uint8_t bank_id, uint8_t *is_done) {
         return status;
     }
 
-    (void)bank_index;
-
     *is_done = 1U;
 
-    return BOARD_OK;
+    return board_stub_nand_erase_status[bank_index];
 }
 
 BoardStatus board_nand_is_full(uint8_t bank_id, uint8_t *is_full) {
@@ -1398,7 +1450,52 @@ BoardStatus board_data_write(const void *buffer, size_t size, size_t *bytes_writ
         return BOARD_ERR_INVALID_ARG;
     }
 
-    *bytes_written = size;
+    *bytes_written = 0U;
+
+    if (size == 0U) {
+        return board_stub_data_flush_status;
+    }
+
+    if (board_stub_data_write_status != BOARD_OK) {
+        return board_stub_data_write_status;
+    }
+
+    if (board_stub_data_write_stalled == 0U) {
+        *bytes_written = size;
+    }
+
+    return BOARD_OK;
+}
+
+BoardStatus board_data_link_present(uint8_t *present) {
+    if (present == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *present = board_stub_data_link_present;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_data_link_take_fault(uint8_t *fault) {
+    if (fault == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *fault = board_stub_data_link_fault;
+    board_stub_data_link_fault = 0U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_data_link_open(void) {
+    board_stub_data_link_opened = 1U;
+
+    return BOARD_OK;
+}
+
+BoardStatus board_data_link_close(void) {
+    board_stub_data_link_opened = 0U;
 
     return BOARD_OK;
 }

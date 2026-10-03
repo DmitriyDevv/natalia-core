@@ -113,7 +113,7 @@ static void fill_page(uint32_t block, uint32_t page) {
 }
 #endif
 
-#if NAND_WT_DO_VERIFY
+#if (NAND_WT_DO_VERIFY || NAND_WT_DO_ERASE)
 static uint8_t read_buf[NAND_WT_PAGE_SIZE];
 #endif
 
@@ -184,11 +184,25 @@ static uint32_t scan_bad_blocks(void) {
 }
 
 #if NAND_WT_DO_ERASE
+static uint8_t page_is_erased(void) {
+    uint32_t offset;
+
+    for (offset = 0U; offset < NAND_WT_PAGE_SIZE; ++offset) {
+        if (read_buf[offset] != 0xFFU) {
+            return 0U;
+        }
+    }
+
+    return 1U;
+}
+
 static void phase_erase(void) {
     uint32_t block;
     uint32_t erased = 0U;
     uint32_t erase_fail = 0U;
+    uint32_t verify_fail = 0U;
     uint8_t have_first_fail = 0U;
+    uint8_t have_first_verify_fail = 0U;
     uint32_t t0 = timebase_millis();
 
     for (block = 0U; block < NAND_WT_BLOCKS; ++block) {
@@ -209,12 +223,24 @@ static void phase_erase(void) {
             continue;
         }
 
+        status = nand_mt29f_read_page(block, 0U, read_buf, NAND_WT_PAGE_SIZE);
+        if ((status != BOARD_OK) || (page_is_erased() == 0U)) {
+            ++verify_fail;
+            if (have_first_verify_fail == 0U) {
+                have_first_verify_fail = 1U;
+                log_kv("first_erase_verify_fail_block", block);
+                log_kv("erase_verify_status", (uint32_t)status);
+            }
+            continue;
+        }
+
         ++erased;
     }
 
     log_kv("erase_ms", timebase_millis() - t0);
     log_kv("blocks_erased", erased);
     log_kv("erase_fail", erase_fail);
+    log_kv("erase_verify_fail", verify_fail);
 }
 #endif
 

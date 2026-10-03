@@ -28,6 +28,7 @@ static uint8_t storage_good_table_bank = NAND_STORAGE_NO_BANK;
 static NandStorageMode storage_mode = NAND_STORAGE_MODE_IDLE;
 static NandMt29fBank storage_bank = NAND_MT29F_BANK_1;
 static uint8_t storage_mounted = 0U;
+static uint8_t storage_chip_ready = 0U;
 static uint8_t storage_is_full = 0U;
 static BoardStatus storage_last_status = BOARD_OK;
 
@@ -42,6 +43,7 @@ static uint32_t storage_erase_erased_blocks = 0U;
 static uint32_t storage_erase_skipped_bad_blocks = 0U;
 static uint32_t storage_erase_failed_blocks = 0U;
 static uint32_t storage_erase_error_blocks = 0U;
+static uint32_t storage_erase_verify_failed_blocks = 0U;
 
 static uint32_t storage_program_done = 0U;
 static uint32_t storage_program_unconfirmed = 0U;
@@ -70,7 +72,8 @@ static void storage_set_status(BoardStatus status) {
     storage_last_status = status;
 
     if ((status != BOARD_OK) && (status != BOARD_ERR_BUSY) &&
-        (status != BOARD_ERR_NOT_READY) && (status != BOARD_ERR_INVALID_ARG)) {
+        (status != BOARD_ERR_NOT_READY) && (status != BOARD_ERR_INVALID_ARG) &&
+        (status != BOARD_ERR_CRC)) {
         storage_mode = NAND_STORAGE_MODE_ERROR;
     }
 }
@@ -207,6 +210,7 @@ static void storage_reset_runtime_state(void) {
     storage_erase_skipped_bad_blocks = 0U;
     storage_erase_failed_blocks = 0U;
     storage_erase_error_blocks = 0U;
+    storage_erase_verify_failed_blocks = 0U;
     storage_program_done = 0U;
     storage_program_unconfirmed = 0U;
     storage_scan_next_block = 0U;
@@ -279,6 +283,7 @@ static BoardStatus storage_get_free_buffer(uint8_t* buffer_index) {
 
 BoardStatus nand_storage_init(void) {
     storage_mounted = 0U;
+    storage_chip_ready = 0U;
     storage_bank = NAND_MT29F_BANK_1;
     storage_good_table_bank = NAND_STORAGE_NO_BANK;
     storage_good_block_count = 0U;
@@ -306,6 +311,11 @@ BoardStatus nand_storage_mount(NandMt29fBank bank) {
 
     if ((storage_mounted == 0U) || (storage_bank != bank)) {
         storage_reset_runtime_state();
+        storage_chip_ready = 0U;
+    }
+
+    if (storage_mode == NAND_STORAGE_MODE_ERROR) {
+        storage_chip_ready = 0U;
     }
 
     status = nand_mt29f_select_bank(bank);
@@ -313,9 +323,13 @@ BoardStatus nand_storage_mount(NandMt29fBank bank) {
         return storage_fail(status);
     }
 
-    status = nand_mt29f_init();
-    if (status != BOARD_OK) {
-        return storage_fail(status);
+    if (storage_chip_ready == 0U) {
+        status = nand_mt29f_init();
+        if (status != BOARD_OK) {
+            return storage_fail(status);
+        }
+
+        storage_chip_ready = 1U;
     }
 
     storage_bank = bank;
@@ -743,14 +757,14 @@ BoardStatus nand_storage_read_packet(uint32_t packet_index,
 
     status = nand_mt29f_read_page_at(location.block, location.page, location.column,
                                      storage_read_buffer, NAND_STORAGE_PACKET_SIZE);
-    if (status != BOARD_OK) {
+    if ((status != BOARD_OK) && (status != BOARD_ERR_CRC)) {
         return storage_fail(status);
     }
 
     (void)memcpy(packet, storage_read_buffer, NAND_STORAGE_PACKET_SIZE);
-    storage_set_status(BOARD_OK);
+    storage_set_status(status);
 
-    return BOARD_OK;
+    return status;
 }
 
 BoardStatus nand_storage_read_next_packet(void* packet,
@@ -785,6 +799,24 @@ BoardStatus nand_storage_read_next_packet(void* packet,
     return BOARD_OK;
 }
 
+static BoardStatus storage_verify_erased(uint32_t block) {
+    BoardStatus status;
+    uint32_t index;
+
+    status = nand_mt29f_read_page_at(block, 0U, 0U, storage_read_buffer, NAND_STORAGE_PACKET_SIZE);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    for (index = 0U; index < NAND_STORAGE_PACKET_SIZE; ++index) {
+        if (storage_read_buffer[index] != 0xFFU) {
+            return BOARD_ERR_IO;
+        }
+    }
+
+    return BOARD_OK;
+}
+
 BoardStatus nand_storage_erase_bank_start(NandMt29fBank bank) {
     BoardStatus status;
 
@@ -806,6 +838,7 @@ BoardStatus nand_storage_erase_bank_start(NandMt29fBank bank) {
     storage_erase_skipped_bad_blocks = 0U;
     storage_erase_failed_blocks = 0U;
     storage_erase_error_blocks = 0U;
+    storage_erase_verify_failed_blocks = 0U;
     storage_clear_faults();
 
     storage_mode = NAND_STORAGE_MODE_ERASE;
@@ -850,6 +883,11 @@ BoardStatus nand_storage_erase_bank_poll(uint8_t* is_done) {
         storage_is_full = (storage_capacity() == 0U) ? 1U : 0U;
         storage_mode = NAND_STORAGE_MODE_IDLE;
         *is_done = 1U;
+
+        if ((storage_erase_error_blocks != 0U) || (storage_erase_verify_failed_blocks != 0U)) {
+            return storage_fail(BOARD_ERR_IO);
+        }
+
         storage_set_status(BOARD_OK);
         return BOARD_OK;
     }
@@ -876,6 +914,14 @@ BoardStatus nand_storage_erase_bank_poll(uint8_t* is_done) {
         } else {
             ++storage_erase_error_blocks;
         }
+        storage_set_status(BOARD_OK);
+        return BOARD_OK;
+    }
+
+    status = storage_verify_erased(block);
+    if (status != BOARD_OK) {
+        (void)storage_record_fault(block, status);
+        ++storage_erase_verify_failed_blocks;
         storage_set_status(BOARD_OK);
         return BOARD_OK;
     }
@@ -923,6 +969,7 @@ BoardStatus nand_storage_get_info(NandStorageInfo* info) {
     info->erase_skipped_bad_blocks = storage_erase_skipped_bad_blocks;
     info->erase_failed_blocks = storage_erase_failed_blocks;
     info->erase_error_blocks = storage_erase_error_blocks;
+    info->erase_verify_failed_blocks = storage_erase_verify_failed_blocks;
     info->program_done = storage_program_done;
     info->program_unconfirmed = storage_program_unconfirmed;
     info->scan_next_block = storage_scan_next_block;

@@ -54,7 +54,13 @@
 #define BOARD_STARTUP_FTDI_ENABLED 0
 #endif
 
-#if (BOARD_STARTUP_CAN_ENABLED || BOARD_STARTUP_PED_ENABLED || \
+#if (BOARD_STARTUP_CAN_ENABLED && (NATALIA_LOG_BACKEND != NATALIA_LOG_BACKEND_CAN))
+#define BOARD_STARTUP_CAN_PINS_DRIVEN 1
+#else
+#define BOARD_STARTUP_CAN_PINS_DRIVEN 0
+#endif
+
+#if (BOARD_STARTUP_CAN_PINS_DRIVEN || BOARD_STARTUP_PED_ENABLED || BOARD_STARTUP_FTDI_ENABLED || \
      (BOARD_STARTUP_NAND_ENABLED && (NATALIA_NAND_POWER_SWITCH_ID != 0)))
 static BoardStatus configure_output(BoardPinId pin_id, GpioLevel level) {
     static const GpioConfig output_low_config = {
@@ -81,7 +87,7 @@ static BoardStatus configure_output(BoardPinId pin_id, GpioLevel level) {
 }
 #endif
 
-#if (BOARD_STARTUP_CAN_ENABLED || BOARD_STARTUP_USB_ENABLED)
+#if (BOARD_STARTUP_CAN_PINS_DRIVEN || BOARD_STARTUP_USB_ENABLED || BOARD_STARTUP_FTDI_ENABLED)
 static BoardStatus configure_input(BoardPinId pin_id) {
     static const GpioConfig input_no_pull_config = {
         .mode = GPIO_MODE_INPUT,
@@ -224,12 +230,25 @@ static BoardStatus configure_can_control(void) {
 }
 
 static BoardStatus configure_usb_control(void) {
-#if BOARD_STARTUP_FTDI_ENABLED
-    return BOARD_OK;
-#elif BOARD_STARTUP_USB_ENABLED
+#if (BOARD_STARTUP_FTDI_ENABLED || BOARD_STARTUP_USB_ENABLED)
     return configure_input(BOARD_PIN_PU_USB_VBUS);
 #else
     return gpio_set_disconnected(BOARD_PIN_PU_USB_VBUS);
+#endif
+}
+
+static BoardStatus configure_ftdi_control(void) {
+#if BOARD_STARTUP_FTDI_ENABLED
+    BoardStatus status;
+
+    status = configure_output(BOARD_PIN_PU_FTDI_PS, GPIO_LEVEL_LOW);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    return configure_output(BOARD_PIN_PU_FTDI_RES, GPIO_LEVEL_LOW);
+#else
+    return BOARD_OK;
 #endif
 }
 
@@ -343,6 +362,11 @@ BoardStatus board_startup_io_init(void) {
     }
 
     status = configure_usb_control();
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = configure_ftdi_control();
     if (status != BOARD_OK) {
         return status;
     }

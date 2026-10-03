@@ -132,6 +132,22 @@ target_compile_options(test_erase PRIVATE
 
 add_test(NAME test_erase COMMAND test_erase)
 
+add_executable(test_mode_alarms
+        test_mode_alarms.c
+)
+
+target_link_libraries(test_mode_alarms PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_mode_alarms PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_mode_alarms COMMAND test_mode_alarms)
+
 add_executable(test_dump
         test_dump.c
 )

@@ -28,6 +28,12 @@ void fake_nand_set_erase_ignored(uint8_t bank_id, uint32_t block);
 
 void fake_nand_set_erase_fail(uint8_t bank_id, uint32_t block);
 
+/* Erase reports success but the block is left unchanged. */
+void fake_nand_set_erase_silent(uint8_t bank_id, uint32_t block);
+
+/* Reads of the block deliver data but report an uncorrectable ECC error. */
+void fake_nand_set_read_uncorrectable(uint8_t bank_id, uint32_t block);
+
 void fake_nand_set_program_fail(uint8_t bank_id, uint32_t block);
 
 uint8_t fake_nand_block_is_erased(uint8_t bank_id, uint32_t block);
