@@ -12,6 +12,7 @@
 #define CRC_TEST_SPEED_ROUNDS     500U
 #define CRC_TEST_SPEED_BYTES      2048U
 #define CRC_TEST_CHECK_VALUE      0x29B1U
+#define CRC_TEST_START_DELAY_MS   5000U
 
 static uint8_t crc_test_buffer[CRC_TEST_BUFFER_BYTES];
 static uint32_t crc_test_seed = 0x12345678UL;
@@ -110,6 +111,8 @@ int main(void) {
     (void)clock_init();
     (void)timebase_init();
     (void)debug_log_init();
+
+    timebase_delay_ms_blocking(CRC_TEST_START_DELAY_MS);
 
     debug_log_write("\r\nCRC16 HW TEST\r\n");
 

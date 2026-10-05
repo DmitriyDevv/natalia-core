@@ -4,16 +4,22 @@
 
 #include "crc16.h"
 
+#if !defined(__BYTE_ORDER__) || (__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__)
+#error "NI words are stored little-endian by direct copy: little-endian target required"
+#endif
+
 #define NI_STREAM_BYTES(words) ((words) * 2U)
 
 static void ni_stream_put_word(uint8_t* packet, size_t index, uint16_t value) {
-    packet[NI_STREAM_BYTES(index)] = (uint8_t)(value & 0x00FFU);
-    packet[NI_STREAM_BYTES(index) + 1U] = (uint8_t)((value >> 8) & 0x00FFU);
+    (void)memcpy(&packet[NI_STREAM_BYTES(index)], &value, sizeof(value));
 }
 
 static uint16_t ni_stream_get_word(const uint8_t* packet, size_t index) {
-    return (uint16_t)((uint16_t)packet[NI_STREAM_BYTES(index)] |
-                      ((uint16_t)packet[NI_STREAM_BYTES(index) + 1U] << 8));
+    uint16_t value;
+
+    (void)memcpy(&value, &packet[NI_STREAM_BYTES(index)], sizeof(value));
+
+    return value;
 }
 
 static uint8_t* ni_stream_current_slot(NiStream* stream) {

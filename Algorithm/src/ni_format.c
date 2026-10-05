@@ -1,15 +1,26 @@
 #include "ni_format.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <string.h>
 
 #include "crc16.h"
 
+#if !defined(__BYTE_ORDER__) || (__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__)
+#error "NI words are stored little-endian by direct copy: little-endian target required"
+#endif
+
 #define NI_FORMAT_BYTES(words) ((words) * 2U)
 
+_Static_assert(sizeof(NiEventRecord) == NI_FORMAT_BYTES(NI_FORMAT_EVENT_WORDS),
+               "NiEventRecord must be 4 consecutive 16-bit words");
+_Static_assert(offsetof(NiEventRecord, t_trig) == 0U, "NiEventRecord word order");
+_Static_assert(offsetof(NiEventRecord, t_pe_dead) == 2U, "NiEventRecord word order");
+_Static_assert(offsetof(NiEventRecord, amp_d) == 4U, "NiEventRecord word order");
+_Static_assert(offsetof(NiEventRecord, trig_stat) == 6U, "NiEventRecord word order");
+
 static void ni_format_put_word(uint8_t* out, size_t index, uint16_t value) {
-    out[NI_FORMAT_BYTES(index)] = (uint8_t)(value & 0x00FFU);
-    out[NI_FORMAT_BYTES(index) + 1U] = (uint8_t)((value >> 8) & 0x00FFU);
+    (void)memcpy(&out[NI_FORMAT_BYTES(index)], &value, sizeof(value));
 }
 
 static uint16_t ni_format_pack_bytes(uint8_t high, uint8_t low) {
@@ -108,8 +119,6 @@ size_t ni_format_build_events(const NiFormatStamp* stamp,
                               const NiEventRecord* events, size_t event_count,
                               uint8_t* out, size_t capacity) {
     size_t total_words = ni_format_events_words(event_count);
-    size_t i;
-    size_t index;
 
     if ((total_words == 0U) || (events == NULL) ||
         !ni_format_can_build(stamp, out, capacity, total_words)) {
@@ -118,14 +127,8 @@ size_t ni_format_build_events(const NiFormatStamp* stamp,
 
     ni_format_put_header(out, NI_FORMAT_EVENTS, stamp, total_words);
 
-    index = NI_FORMAT_HEADER_WORDS;
-    for (i = 0U; i < event_count; ++i) {
-        ni_format_put_word(out, index, events[i].t_trig);
-        ni_format_put_word(out, index + 1U, events[i].t_pe_dead);
-        ni_format_put_word(out, index + 2U, events[i].amp_d);
-        ni_format_put_word(out, index + 3U, events[i].trig_stat);
-        index += NI_FORMAT_EVENT_WORDS;
-    }
+    ni_format_copy_words(out, NI_FORMAT_HEADER_WORDS, (const uint8_t*)events,
+                         event_count * NI_FORMAT_EVENT_WORDS);
 
     return ni_format_finish(out, total_words);
 }
