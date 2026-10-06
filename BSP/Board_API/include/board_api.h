@@ -162,6 +162,9 @@ BoardStatus board_rtc_get_time(InstrumentTime* time);
 BoardStatus board_rtc_set_time(const InstrumentTime* time);
 BoardStatus board_rtc_take_1hz_events(uint32_t* event_count);
 
+uint32_t board_timestamp(void);
+uint32_t board_elapsed_us(uint32_t timestamp);
+
 BoardStatus board_temp_init(void);
 BoardStatus board_temp_start(void);
 BoardStatus board_temp_stop(void);
@@ -181,6 +184,7 @@ BoardStatus board_data_is_ready(uint8_t* is_ready);
 BoardStatus board_data_link_present(uint8_t* present);
 BoardStatus board_data_link_take_fault(uint8_t* fault);
 BoardStatus board_data_link_open(void);
+BoardStatus board_data_link_ready(uint8_t* ready);
 BoardStatus board_data_link_close(void);
 
 #if defined(NATALIA_ENABLE_BOARD_TEST_HOOKS) && (NATALIA_ENABLE_BOARD_TEST_HOOKS != 0)

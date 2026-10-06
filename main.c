@@ -27,6 +27,7 @@
 #include "board_api.h"
 #include "clock.h"
 #include "debug_log.h"
+#include "natalia_build_info.h"
 #include "event_queue.h"
 #include "state.h"
 #include "test_mode_config.h"
@@ -168,7 +169,7 @@ static void halt(void) {
 }
 
 int main(void) {
-    SystemContext ctx;
+    static SystemContext ctx;
     SystemState last_state;
     BoardStatus status;
     BoardStatus last_transport_status;
@@ -184,6 +185,7 @@ int main(void) {
     (void)debug_log_init();
 
     debug_log_write("\r\nNATALIA CORE\r\n");
+    debug_log_write("build " NATALIA_BUILD_TIME "\r\n");
     debug_log_write("sysclk=");
     debug_log_write_u32_inline(clock_get_sysclk_hz());
     debug_log_write(" hclk=");

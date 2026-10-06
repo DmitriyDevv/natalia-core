@@ -35,6 +35,7 @@ bool ped_reg_ring_has_event_room(const PedRegRing* ring);
 bool ped_reg_ring_push_event(PedRegRing* ring, const PedRegRecord* record);
 bool ped_reg_ring_push_second(PedRegRing* ring, const PedRegRecord* record);
 bool ped_reg_ring_pop(PedRegRing* ring, PedRegRecord* record);
+uint32_t ped_reg_ring_pop_many(PedRegRing* ring, void* records, uint32_t max_records);
 uint32_t ped_reg_ring_high_water(const PedRegRing* ring);
 uint32_t ped_reg_ring_seconds_lost(const PedRegRing* ring);
 

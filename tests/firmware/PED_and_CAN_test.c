@@ -84,11 +84,7 @@ static void collect_ped_triggers(uint32_t* trigger_total) {
         return;
     }
 
-    while (count > 0U) {
-        (void)system_event_queue_push_back_type(EVENT_PED_TRIGGER);
-        ++(*trigger_total);
-        --count;
-    }
+    *trigger_total += count;
 }
 
 static void log_registration(const SystemContext* ctx) {
@@ -102,7 +98,7 @@ static void log_registration(const SystemContext* ctx) {
 }
 
 int main(void) {
-    SystemContext ctx;
+    static SystemContext ctx;
     SystemState last_state;
     BoardStatus status;
     uint32_t now_ms;

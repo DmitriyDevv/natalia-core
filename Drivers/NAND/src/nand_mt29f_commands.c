@@ -237,7 +237,7 @@ BoardStatus nand_mt29f_poll_ready_once(uint8_t* is_ready,
 BoardStatus nand_mt29f_wait_ready(uint8_t* status_value) {
     uint8_t is_ready = 0U;
     uint8_t status = 0U;
-    uint32_t timeout = NAND_TIMEOUT_LOOPS;
+    uint32_t start;
     uint32_t attempt;
     BoardStatus result;
 
@@ -254,7 +254,8 @@ BoardStatus nand_mt29f_wait_ready(uint8_t* status_value) {
         timebase_delay_us_blocking(NAND_BUSY_CONFIRM_STEP_US);
     }
 
-    while (timeout > 0U) {
+    start = timebase_cycles();
+    while (timebase_us_since(start) < NAND_READY_TIMEOUT_US) {
         result = nand_mt29f_poll_ready_once(&is_ready, &status);
         if (result != BOARD_OK) {
             return result;
@@ -268,7 +269,6 @@ BoardStatus nand_mt29f_wait_ready(uint8_t* status_value) {
             return BOARD_OK;
         }
 
-        --timeout;
     }
 
     return BOARD_ERR_TIMEOUT;
@@ -277,7 +277,7 @@ BoardStatus nand_mt29f_wait_ready(uint8_t* status_value) {
 BoardStatus nand_mt29f_wait_busy_then_ready(uint8_t* status_value) {
     uint8_t is_ready = 1U;
     uint8_t status = 0U;
-    uint32_t timeout = NAND_TIMEOUT_LOOPS;
+    uint32_t start;
     uint32_t attempt;
     BoardStatus result;
 
@@ -298,7 +298,8 @@ BoardStatus nand_mt29f_wait_busy_then_ready(uint8_t* status_value) {
         return nand_mt29f_record_fault(NAND_MT29F_FAULT_BUSY_NOT_SEEN, status, BOARD_ERR_IO);
     }
 
-    while (timeout > 0U) {
+    start = timebase_cycles();
+    while (timebase_us_since(start) < NAND_READY_TIMEOUT_US) {
         result = nand_mt29f_poll_ready_once(&is_ready, &status);
         if (result != BOARD_OK) {
             return nand_mt29f_record_fault(NAND_MT29F_FAULT_QSPI, 0U, result);
@@ -312,7 +313,6 @@ BoardStatus nand_mt29f_wait_busy_then_ready(uint8_t* status_value) {
             return BOARD_OK;
         }
 
-        --timeout;
     }
 
     return nand_mt29f_record_fault(NAND_MT29F_FAULT_TIMEOUT, status, BOARD_ERR_TIMEOUT);

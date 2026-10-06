@@ -8,6 +8,7 @@
 #include "board_api.h"
 #include "dump_mode_config.h"
 #include "event_queue.h"
+#include "observe.h"
 #include "test_mode_config.h"
 
 #ifndef ALGORITHM_EVENTS_PER_POLL
@@ -286,16 +287,6 @@ static uint8_t dump_bank_id(NandBank bank) {
     return (uint8_t)bank;
 }
 
-static uint32_t dump_next_packet_size(const DumpContext* dump) {
-    uint32_t remaining = dump->size - dump->bytes_done;
-
-    if (remaining > DUMP_MODE_PACKET_SIZE) {
-        return DUMP_MODE_PACKET_SIZE;
-    }
-
-    return remaining;
-}
-
 static void finish_dump_step(SystemContext* ctx) {
     (void)ctx;
     (void)system_event_queue_push_back_type(EVENT_DUMP_DONE);
@@ -351,6 +342,15 @@ static void dump_mode_send_step(SystemContext* ctx) {
     if (dump->send_offset >= dump->packet_size) {
         dump->stage = DUMP_STAGE_CHECK;
         return;
+    }
+
+    if (!dump->link_ready) {
+        uint8_t ready = 0U;
+
+        if ((board_data_link_ready(&ready) != BOARD_OK) || (ready == 0U)) {
+            return;
+        }
+        dump->link_ready = true;
     }
 
     bytes_left = (size_t)(dump->packet_size - dump->send_offset);
@@ -420,76 +420,6 @@ static void dump_mode_poll(SystemContext* ctx) {
     }
 }
 
-
-static uint8_t observe_bank_id(NandBank bank) {
-    return (uint8_t)bank;
-}
-
-static void observe_mode_full_step(SystemContext *ctx) {
-    (void)ctx;
-    (void)system_event_queue_push_back_type(EVENT_NAND_FULL);
-}
-
-static void observe_mode_fail(SystemContext *ctx) {
-    alarm_raise(ctx, ALARM_NAND_PR);
-    ctx->observe.operation_failed = true;
-    ctx->observe.pending_write = false;
-    ctx->observe.write_active = false;
-    ctx->observe.registration_enabled = false;
-    ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-}
-
-static void observe_mode_poll(SystemContext *ctx) {
-    ObserveContext *observe = &ctx->observe;
-    BoardStatus status;
-    uint8_t is_done = 0U;
-    uint8_t is_full = 0U;
-
-    if (observe->stage != OBSERVE_STAGE_ACTIVE) {
-        return;
-    }
-
-    if (observe->write_active) {
-        status = board_nand_write_flush(observe_bank_id(observe->bank), &is_done);
-        if (status != BOARD_OK) {
-            observe_mode_fail(ctx);
-            return;
-        }
-
-        if (is_done == 0U) {
-            return;
-        }
-
-        observe->write_active = false;
-        ++observe->packet_index;
-        observe->committed_packet_count = observe->packet_index;
-        ++observe->events_written;
-
-        status = board_nand_is_full(observe_bank_id(observe->bank), &is_full);
-        if (status != BOARD_OK) {
-            observe_mode_fail(ctx);
-            return;
-        }
-
-        if (is_full != 0U) {
-            observe_mode_full_step(ctx);
-            return;
-        }
-    }
-
-    if (observe->pending_write) {
-        status = board_nand_write_packet(observe_bank_id(observe->bank),
-                                         observe->packet_buffer);
-        if (status != BOARD_OK) {
-            observe_mode_fail(ctx);
-            return;
-        }
-
-        observe->pending_write = false;
-        observe->write_active = true;
-    }
-}
-
 static void collect_nand_power_fault(SystemContext *ctx, uint8_t bank_id) {
     uint8_t fault = 0U;
 
@@ -524,15 +454,6 @@ void algorithm_collect_hw_events(SystemContext *ctx) {
         }
     }
 
-    if (ctx->state == STATE_OBSERVE) {
-        count = 0U;
-        if (board_ped_take_trigger_events(&count) == BOARD_OK) {
-            while (count > 0U) {
-                (void)system_event_queue_push_back_type(EVENT_PED_TRIGGER);
-                --count;
-            }
-        }
-    }
 }
 
 void algorithm_poll(SystemContext *ctx) {
@@ -545,7 +466,7 @@ void algorithm_poll(SystemContext *ctx) {
     } else if (ctx->state == STATE_TEST) {
         test_mode_poll(ctx);
     } else if (ctx->state == STATE_OBSERVE) {
-        observe_mode_poll(ctx);
+        observe_poll(ctx);
     } else if (ctx->state == STATE_DUMP) {
         dump_mode_poll(ctx);
     }

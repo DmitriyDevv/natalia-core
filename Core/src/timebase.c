@@ -99,6 +99,10 @@ uint32_t timebase_us_since(uint32_t start_cycles) {
     return (DWT->CYCCNT - start_cycles) / timebase_cycles_per_us;
 }
 
+__attribute__((weak)) void timebase_tick_hook(void) {
+}
+
 void SysTick_Handler(void) {
     ++timebase_ticks_ms;
+    timebase_tick_hook();
 }

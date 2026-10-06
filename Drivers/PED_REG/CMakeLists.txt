@@ -14,6 +14,12 @@ target_link_libraries(natalia_ped_reg PUBLIC
         natalia_cmsis
 )
 
+if (NATALIA_ENABLE_PED_INJECT)
+    target_compile_definitions(natalia_ped_reg PUBLIC
+            NATALIA_PED_REG_INJECT=1
+    )
+endif()
+
 target_compile_options(natalia_ped_reg PRIVATE
         -Wall
         -Wextra

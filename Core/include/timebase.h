@@ -20,4 +20,6 @@ uint32_t timebase_cycles(void);
 
 uint32_t timebase_us_since(uint32_t start_cycles);
 
+void timebase_tick_hook(void);
+
 #endif /* NATALIA_CORE_TIMEBASE_H */

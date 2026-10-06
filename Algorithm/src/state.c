@@ -49,6 +49,17 @@ static SystemState finish_mode(SystemContext* ctx) {
     return ctx->state;
 }
 
+static SystemState finish_observe_exit(SystemContext* ctx) {
+    if ((ctx->observe.finish_target_state == STATE_SHUTDOWN) && !is_alarm_active(ctx)) {
+        (void)action_start_shutdown(ctx);
+        transition_to(ctx, STATE_SHUTDOWN);
+        (void)action_send_status(ctx);
+        return ctx->state;
+    }
+
+    return finish_mode(ctx);
+}
+
 static SystemState finish_command_transition(SystemContext* ctx,
                                              const SystemEvent* event,
                                              ActionResult result,
@@ -233,7 +244,7 @@ static SystemState handle_duty_event(SystemContext* ctx, const SystemEvent* even
 
     // 115
     case EVENT_TLM_TIME_SYNC:
-    case EVENT_TLM_ORBIT:
+    case EVENT_TLM_MCILWAIN:
     case EVENT_TLM_MAGFIELD:
         return ctx->state;
 
@@ -309,7 +320,7 @@ static SystemState handle_erase_event(SystemContext* ctx, const SystemEvent* eve
 
     // 205
     case EVENT_TLM_TIME_SYNC:
-    case EVENT_TLM_ORBIT:
+    case EVENT_TLM_MCILWAIN:
     case EVENT_TLM_MAGFIELD:
         return ctx->state;
 
@@ -382,7 +393,7 @@ static SystemState handle_test_event(SystemContext* ctx, const SystemEvent* even
 
     // 305
     case EVENT_TLM_TIME_SYNC:
-    case EVENT_TLM_ORBIT:
+    case EVENT_TLM_MCILWAIN:
     case EVENT_TLM_MAGFIELD:
         return ctx->state;
 
@@ -406,11 +417,6 @@ static SystemState handle_observe_event(SystemContext* ctx, const SystemEvent* e
     // 400
     case EVENT_RTC_1HZ:
         (void)action_observe_periodic(ctx);
-        return ctx->state;
-
-    // 401
-    case EVENT_PED_TRIGGER:
-        (void)action_handle_ped_trigger(ctx);
         return ctx->state;
 
     // 402
@@ -441,8 +447,8 @@ static SystemState handle_observe_event(SystemContext* ctx, const SystemEvent* e
         return ctx->state;
 
     // 406
-    case EVENT_TLM_ORBIT:
-        (void)action_accept_orbit(ctx, event);
+    case EVENT_TLM_MCILWAIN:
+        (void)action_accept_mcilwain(ctx, event);
         return ctx->state;
 
     // 408
@@ -463,16 +469,27 @@ static SystemState handle_observe_event(SystemContext* ctx, const SystemEvent* e
 
     // 410
     case EVENT_CMD_DUTY:
-        result = action_finish_observe(ctx, event);
-        return finish_command_transition(ctx, event, result, STATE_DUTY);
-
     // 411
     case EVENT_CMD_SHUTDOWN:
         result = action_finish_observe(ctx, event);
-        if (result == ACTION_OK) {
-            result = action_start_shutdown(ctx);
+        if (result != ACTION_OK) {
+            return finish_command_result(ctx, event, result);
         }
-        return finish_command_transition(ctx, event, result, STATE_SHUTDOWN);
+
+        (void)action_send_ack(event);
+        if (ctx->observe.stage == OBSERVE_STAGE_EXIT_CMD) {
+            return finish_observe_exit(ctx);
+        }
+        return ctx->state;
+
+    case EVENT_OBSERVE_DONE:
+        if (ctx->observe.stage == OBSERVE_STAGE_EXIT_ALARM) {
+            (void)action_finish_observe_alarm(ctx);
+            return finish_mode(ctx);
+        }
+
+        (void)action_complete_observe(ctx);
+        return finish_observe_exit(ctx);
 
     // 412
     case EVENT_CMD_SET_TIME:
@@ -571,7 +588,7 @@ static SystemState handle_dump_event(SystemContext* ctx, const SystemEvent* even
 
     // 505
     case EVENT_TLM_TIME_SYNC:
-    case EVENT_TLM_ORBIT:
+    case EVENT_TLM_MCILWAIN:
     case EVENT_TLM_MAGFIELD:
         return ctx->state;
 
@@ -669,7 +686,7 @@ static SystemState handle_alarm_event(SystemContext* ctx, const SystemEvent* eve
 
     // 608
     case EVENT_TLM_TIME_SYNC:
-    case EVENT_TLM_ORBIT:
+    case EVENT_TLM_MCILWAIN:
     case EVENT_TLM_MAGFIELD:
         return ctx->state;
 
@@ -718,7 +735,7 @@ static SystemState handle_shutdown_event(SystemContext* ctx, const SystemEvent* 
 
     // 702
     case EVENT_TLM_TIME_SYNC:
-    case EVENT_TLM_ORBIT:
+    case EVENT_TLM_MCILWAIN:
     case EVENT_TLM_MAGFIELD:
         return ctx->state;
 

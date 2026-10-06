@@ -116,6 +116,18 @@ option(NATALIA_ENABLE_BOARD_TEST_HOOKS
         "Enable temporary board test hooks"
         OFF)
 
+option(NATALIA_ENABLE_PED_INJECT
+        "Build ped_reg_inject_event (test stands only: PED events without a PED)"
+        OFF)
+
+option(NATALIA_OBSERVE_EVENTS_WAIT_KT
+        "OBSERVE: no Events format until the first KT (any of F210h/F221h/0E00h) of the session"
+        ON)
+
+option(NATALIA_ENABLE_LTO
+        "Link-time optimization for the firmware (measured: +18 % OBSERVE throughput at Nmax = 1)"
+        ON)
+
 option(NATALIA_ENABLE_WATCHDOG
         "Enable the IWDG independent watchdog in the flight main"
         ON)
@@ -283,6 +295,10 @@ endif()
 # Desktop tests
 # -----------------------------------------------------------------------------
 
+if (NATALIA_ENABLE_LTO AND NOT NATALIA_BUILD_TESTS)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+endif()
+
 if (NATALIA_BUILD_TESTS)
     add_subdirectory(Core)
     add_subdirectory(Algorithm)
@@ -387,7 +403,16 @@ add_executable(natalia_firmware
         Device/src/sysmem.c
 )
 
+add_custom_target(natalia_build_info
+        COMMAND ${CMAKE_COMMAND} -DOUT=${CMAKE_BINARY_DIR}/generated/natalia_build_info.h
+                -P ${CMAKE_SOURCE_DIR}/cmake/build_info.cmake
+        BYPRODUCTS ${CMAKE_BINARY_DIR}/generated/natalia_build_info.h
+        VERBATIM
+)
+add_dependencies(natalia_firmware natalia_build_info)
+
 target_include_directories(natalia_firmware PRIVATE
+        ${CMAKE_BINARY_DIR}/generated
         ${CMAKE_SOURCE_DIR}/Algorithm/include
 )
 

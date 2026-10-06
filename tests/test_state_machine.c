@@ -2,7 +2,6 @@
 #include <stdbool.h>
 
 #include "board_stub.h"
-#include "observe.h"
 #include "state.h"
 
 
@@ -82,30 +81,11 @@ static void duty_start_erase_with_payload(void) {
     assert(ctx.erase.stage == ERASE_STAGE_WAIT);
 }
 
-static volatile bool rtc_1hz_pending = false;
-
 int main(void) {
     init_done_to_duty();
     init_done_to_alarm();
     init_fail_to_alarm();
     duty_start_erase_with_payload();
-
-    SystemContext ctx = {
-        .state = STATE_OBSERVE,
-        .alarm_status = 0U,
-        .masked_alarm = 0U
-    };
-
-    rtc_1hz_pending = true;
-
-    if (rtc_1hz_pending) {
-        rtc_1hz_pending = false;
-
-        if (ctx.state == STATE_OBSERVE) {
-            observe_on_rtc_1hz(&ctx);
-        }
-    }
-
 
     return 0;
 }

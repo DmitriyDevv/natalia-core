@@ -36,21 +36,21 @@ target_compile_options(test_transport PRIVATE
 
 add_test(NAME test_transport COMMAND test_transport)
 
-add_executable(test_observe
-        test_observe.c
+add_executable(test_observe_mode
+        test_observe_mode.c
 )
 
-target_link_libraries(test_observe PRIVATE
+target_link_libraries(test_observe_mode PRIVATE
         natalia_algorithm
 )
 
-target_compile_options(test_observe PRIVATE
+target_compile_options(test_observe_mode PRIVATE
         -Wall
         -Wextra
         -Wpedantic
 )
 
-add_test(NAME test_observe COMMAND test_observe)
+add_test(NAME test_observe_mode COMMAND test_observe_mode)
 
 add_executable(test_mram_store
         test_mram_store.c

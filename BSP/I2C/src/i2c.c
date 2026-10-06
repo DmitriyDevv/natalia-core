@@ -6,8 +6,9 @@
 #include "board_pins.h"
 #include "gpio.h"
 #include "stm32l496xx.h"
+#include "timebase.h"
 
-#define I2C_TIMEOUT (1000000UL)
+#define I2C_TIMEOUT_US 25000UL
 #define I2C_RECOVERY_DELAY_CYCLES (2000UL)
 #define I2C_MAX_TRANSFER_SIZE (255UL)
 
@@ -164,7 +165,7 @@ static void i2c_clear_flags(I2C_TypeDef* instance) {
 }
 
 static BoardStatus i2c_abort_transfer(I2C_TypeDef* instance) {
-    uint32_t timeout;
+    uint32_t start;
 
     if (instance == 0) {
         return BOARD_ERR_INVALID_ARG;
@@ -176,20 +177,18 @@ static BoardStatus i2c_abort_transfer(I2C_TypeDef* instance) {
         }
     }
 
-    timeout = I2C_TIMEOUT;
+    start = timebase_cycles();
 
     while ((instance->ISR & I2C_ISR_BUSY) != 0U) {
         if ((instance->ISR & I2C_ISR_STOPF) != 0U) {
             break;
         }
 
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= I2C_TIMEOUT_US) {
             i2c_clear_flags(instance);
             instance->CR2 = 0U;
             return BOARD_ERR_TIMEOUT;
         }
-
-        --timeout;
     }
 
     i2c_clear_flags(instance);
@@ -242,17 +241,15 @@ static BoardStatus i2c_check_transfer_error(I2C_TypeDef* instance) {
 }
 
 static BoardStatus i2c_wait_bus_idle(I2C_TypeDef* instance) {
-    uint32_t timeout;
+    uint32_t start;
 
-    timeout = I2C_TIMEOUT;
+    start = timebase_cycles();
 
     while ((instance->ISR & I2C_ISR_BUSY) != 0U) {
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= I2C_TIMEOUT_US) {
             (void)i2c_abort_transfer(instance);
             return BOARD_ERR_BUSY;
         }
-
-        --timeout;
     }
 
     instance->CR2 = 0U;
@@ -261,10 +258,10 @@ static BoardStatus i2c_wait_bus_idle(I2C_TypeDef* instance) {
 }
 
 static BoardStatus i2c_wait_flag(I2C_TypeDef* instance, uint32_t flag) {
-    uint32_t timeout;
+    uint32_t start;
     BoardStatus status;
 
-    timeout = I2C_TIMEOUT;
+    start = timebase_cycles();
 
     while ((instance->ISR & flag) == 0U) {
         status = i2c_check_transfer_error(instance);
@@ -272,22 +269,20 @@ static BoardStatus i2c_wait_flag(I2C_TypeDef* instance, uint32_t flag) {
             return status;
         }
 
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= I2C_TIMEOUT_US) {
             (void)i2c_abort_transfer(instance);
             return BOARD_ERR_TIMEOUT;
         }
-
-        --timeout;
     }
 
     return BOARD_OK;
 }
 
 static BoardStatus i2c_wait_stop(I2C_TypeDef* instance) {
-    uint32_t timeout;
+    uint32_t start;
     BoardStatus status;
 
-    timeout = I2C_TIMEOUT;
+    start = timebase_cycles();
 
     while ((instance->ISR & I2C_ISR_STOPF) == 0U) {
         status = i2c_check_transfer_error(instance);
@@ -295,12 +290,10 @@ static BoardStatus i2c_wait_stop(I2C_TypeDef* instance) {
             return status;
         }
 
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= I2C_TIMEOUT_US) {
             (void)i2c_abort_transfer(instance);
             return BOARD_ERR_TIMEOUT;
         }
-
-        --timeout;
     }
 
     instance->ICR = I2C_ICR_STOPCF;

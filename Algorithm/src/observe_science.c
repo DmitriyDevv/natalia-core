@@ -74,7 +74,8 @@ static void observe_science_commit(ObserveScience* science, NiStream* stream, si
 
 static bool observe_science_events_enabled(const ObserveScience* science) {
     return (science->params.events_mode != (uint8_t)OBSERVE_EVENTS_OFF) &&
-           (science->params.events_nmax > 0U);
+           (science->params.events_nmax > 0U) &&
+           (!science->events_wait_kt || science->kt_received);
 }
 
 static bool observe_science_events_allowed(const ObserveScience* science) {
@@ -240,6 +241,12 @@ void observe_science_request_params(ObserveScience* science, const ObserveScienc
     science->params_pending = true;
 }
 
+void observe_science_set_events_wait_kt(ObserveScience* science, bool wait) {
+    if (science != NULL) {
+        science->events_wait_kt = wait;
+    }
+}
+
 void observe_science_request_final(ObserveScience* science) {
     if (science != NULL) {
         science->final_requested = true;
@@ -365,6 +372,7 @@ ObserveScienceStatus observe_science_on_sync_orbit(ObserveScience* science, NiSt
     }
 
     if (!science->started) {
+        science->kt_received = true;
         return OBSERVE_SCIENCE_OK;
     }
 
@@ -376,6 +384,7 @@ ObserveScienceStatus observe_science_on_sync_orbit(ObserveScience* science, NiSt
     words = ni_format_build_sync_orbit(&stamp, received_at, kt, kt_length,
                                        science->scratch, sizeof(science->scratch));
     observe_science_commit(science, stream, words);
+    science->kt_received = true;
 
     return OBSERVE_SCIENCE_OK;
 }
@@ -402,6 +411,7 @@ ObserveScienceStatus observe_science_on_geomagnetic(ObserveScience* science, NiS
         observe_science_field_inside_belt(&kt[OBSERVE_SCIENCE_KT_BCSAT_OFFSET],
                                           science->limits.belt_bmin);
     science->magfield_valid = true;
+    science->kt_received = true;
 
     if (science->started) {
         stamp = observe_science_stamp(science, rtc_seconds);
@@ -431,6 +441,7 @@ ObserveScienceStatus observe_science_on_mcilwain(ObserveScience* science, NiStre
     science->mcilwain_l = (int16_t)observe_science_read_le_u16(&kt[OBSERVE_SCIENCE_KT_L_OFFSET]);
     science->mcilwain_b = (int16_t)observe_science_read_le_u16(&kt[OBSERVE_SCIENCE_KT_B_OFFSET]);
     science->mcilwain_valid = true;
+    science->kt_received = true;
 
     if (science->started) {
         stamp = observe_science_stamp(science, rtc_seconds);

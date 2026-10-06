@@ -6,7 +6,11 @@
 
 #include "instrument_time.h"
 
+#include "board_api.h"
 #include "dump_mode_config.h"
+#include "ni_stream.h"
+#include "ni_writer.h"
+#include "observe_science.h"
 #include "test_mode_config.h"
 
 typedef enum {
@@ -37,7 +41,7 @@ typedef enum {
     EVENT_CMD_VERSION_REQ,
 
     EVENT_TLM_TIME_SYNC,
-    EVENT_TLM_ORBIT,
+    EVENT_TLM_MCILWAIN,
     EVENT_TLM_MAGFIELD,
 
     EVENT_BOOT,
@@ -45,8 +49,8 @@ typedef enum {
     EVENT_INIT_FAIL,
 
     EVENT_RTC_1HZ,
-    EVENT_PED_TRIGGER,
     EVENT_NAND_FULL,
+    EVENT_OBSERVE_DONE,
     EVENT_ERASE_DONE,
     EVENT_TEST_DONE,
     EVENT_DUMP_DONE,
@@ -104,6 +108,8 @@ typedef enum {
     OBSERVE_STAGE_IDLE,
     OBSERVE_STAGE_ENTER,
     OBSERVE_STAGE_ACTIVE,
+    OBSERVE_STAGE_FINISHING,
+    OBSERVE_STAGE_FLUSHING,
     OBSERVE_STAGE_EXIT_CMD,
     OBSERVE_STAGE_EXIT_FULL,
     OBSERVE_STAGE_EXIT_ALARM
@@ -295,6 +301,7 @@ typedef struct {
     uint32_t tx_watch_bytes;
     uint32_t tx_stall_seconds;
     bool tx_attempted;
+    bool link_ready;
     uint8_t packet_buffer[DUMP_MODE_PACKET_SIZE];
     bool operation_failed;
     bool finish_requested;
@@ -302,43 +309,62 @@ typedef struct {
 } DumpContext;
 
 #define TLM_PAYLOAD_MAX 128U
+#define OBSERVE_RECORD_BATCH 64U
+
+typedef enum {
+    OBSERVE_KT_SYNC_ORBIT = 0,
+    OBSERVE_KT_GEOMAGNETIC = 1,
+    OBSERVE_KT_MCILWAIN = 2,
+    OBSERVE_KT_COUNT = 3
+} ObserveKtType;
 
 typedef struct {
     uint8_t data[TLM_PAYLOAD_MAX];
     uint16_t length;
-    bool valid;
-} KtLatch;
+    InstrumentTime received_at;
+    bool pending;
+} ObserveKtLatch;
+
+typedef struct {
+    uint32_t records_taken;
+    uint32_t events_taken;
+    uint32_t seconds_taken;
+    uint32_t records_held;
+    uint32_t stream_full_passes;
+    uint32_t kt_deferred;
+} ObserveStats;
 
 typedef struct {
     NandBank bank;
-    PowerAfterDone power_after_done;
     ObserveStage stage;
-    uint32_t acquisition_period_ticks;
-    uint32_t events_written;
-    uint32_t packet_index;
-    uint32_t committed_packet_count;
-    uint8_t packet_buffer[DUMP_MODE_PACKET_SIZE];
+    PowerAfterDone bank_power_after_full;
+    bool ped_power_after_full;
+    bool ped_sleep_after_full;
+    bool ped_power_enabled;
+    bool ped_sleep_enabled;
     bool registration_enabled;
-    bool finish_requested;
-    bool pending_write;
-    bool write_active;
-    bool operation_failed;
-    SystemState finish_target_state;
+    bool events_wait_kt;
     uint16_t observe_params;
     uint16_t trigger_config;
-    uint8_t observe_mode_number;
-    uint32_t format_number;
-    uint32_t seconds_elapsed;
-    bool first_tick;
-    bool telem_pending;
-    uint8_t events_mode;
-    uint8_t events_nmax_sel;
-    uint8_t spectrum_mode;
-    uint8_t spectrum_nhist_sel;
-    uint8_t last_emitted_format;
-    KtLatch kt_sync_orbit_attitude;
-    KtLatch kt_geomagnetic;
-    KtLatch kt_mcilwain;
+    bool operation_failed;
+    bool finish_requested;
+    SystemState finish_target_state;
+    PowerAfterDone finish_bank_power;
+    bool finish_ped_power;
+    bool finish_ped_sleep;
+    uint32_t finish_wait_seconds;
+    uint32_t committed_packet_count;
+    bool end_reported;
+    bool telemetry_ready;
+    NiTelemetry telemetry;
+    uint8_t record_count;
+    uint8_t record_index;
+    BoardPedRecord records[OBSERVE_RECORD_BATCH];
+    ObserveKtLatch kt[OBSERVE_KT_COUNT];
+    ObserveStats stats;
+    ObserveScience science;
+    NiStream stream;
+    NiWriter writer;
 } ObserveContext;
 
 typedef struct {

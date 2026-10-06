@@ -5,6 +5,7 @@
 #include "board_pins.h"
 #include "gpio.h"
 #include "stm32l496xx.h"
+#include "timebase.h"
 
 #define ADC_CHANNEL_COUNT (2UL)
 #define ADC_DMA_BUFFER_LENGTH (ADC_CHANNEL_COUNT)
@@ -15,7 +16,7 @@
 #define ADC_TERM_A_CHANNEL (5UL)
 #define ADC_VREFINT_CHANNEL (0UL)
 
-#define ADC_TIMEOUT (1000000UL)
+#define ADC_TIMEOUT_US 10000UL
 #define ADC_SAMPLE_TIME_640_5_CYCLES (7UL)
 #define ADC_MAX_RAW_VALUE (4095UL)
 
@@ -40,40 +41,36 @@ static volatile uint32_t adc_sequence;
 void DMA1_Channel1_IRQHandler(void);
 
 static BoardStatus adc_wait_flag_set(volatile uint32_t* reg, uint32_t mask) {
-    uint32_t timeout;
+    uint32_t start;
 
     if (reg == 0) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    timeout = ADC_TIMEOUT;
+    start = timebase_cycles();
 
     while ((*reg & mask) == 0U) {
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= ADC_TIMEOUT_US) {
             return BOARD_ERR_TIMEOUT;
         }
-
-        --timeout;
     }
 
     return BOARD_OK;
 }
 
 static BoardStatus adc_wait_flag_clear(volatile uint32_t* reg, uint32_t mask) {
-    uint32_t timeout;
+    uint32_t start;
 
     if (reg == 0) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    timeout = ADC_TIMEOUT;
+    start = timebase_cycles();
 
     while ((*reg & mask) != 0U) {
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= ADC_TIMEOUT_US) {
             return BOARD_ERR_TIMEOUT;
         }
-
-        --timeout;
     }
 
     return BOARD_OK;

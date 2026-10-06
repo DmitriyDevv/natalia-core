@@ -2,6 +2,7 @@
 
 #include <stdatomic.h>
 #include <stddef.h>
+#include <string.h>
 
 _Static_assert((PED_REG_RING_CAPACITY & (PED_REG_RING_CAPACITY - 1U)) == 0U,
                "PED ring capacity must be a power of two");
@@ -90,6 +91,46 @@ bool ped_reg_ring_pop(PedRegRing* ring, PedRegRecord* record) {
     ring->head = head + 1U;
 
     return true;
+}
+
+uint32_t ped_reg_ring_pop_many(PedRegRing* ring, void* records, uint32_t max_records) {
+    uint8_t* out = records;
+    uint32_t head;
+    uint32_t count;
+    uint32_t first;
+    uint32_t index;
+
+    if ((ring == NULL) || (records == NULL)) {
+        return 0U;
+    }
+
+    head = ring->head;
+    count = ring->tail - head;
+    if (count > max_records) {
+        count = max_records;
+    }
+    if (count == 0U) {
+        return 0U;
+    }
+
+    atomic_signal_fence(memory_order_seq_cst);
+
+    index = head & PED_REG_RING_MASK;
+    first = PED_REG_RING_CAPACITY - index;
+    if (first > count) {
+        first = count;
+    }
+
+    (void)memcpy(out, &ring->records[index], first * sizeof(PedRegRecord));
+    if (count > first) {
+        (void)memcpy(&out[first * sizeof(PedRegRecord)], &ring->records[0],
+                     (count - first) * sizeof(PedRegRecord));
+    }
+
+    atomic_signal_fence(memory_order_seq_cst);
+    ring->head = head + count;
+
+    return count;
 }
 
 uint32_t ped_reg_ring_high_water(const PedRegRing* ring) {

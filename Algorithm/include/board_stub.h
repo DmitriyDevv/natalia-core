@@ -66,6 +66,7 @@ void board_stub_set_data_write_stalled(bool stalled);
 void board_stub_set_data_link_present(bool present);
 void board_stub_set_data_link_fault(void);
 bool board_stub_data_link_is_open(void);
+void board_stub_set_data_link_ready(bool ready);
 uint32_t board_stub_nand_scan_count(uint8_t bank_id);
 bool board_stub_nand_map_is_valid(uint8_t bank_id);
 void board_stub_set_mram_block_map_valid(uint8_t copy_id, uint8_t nand_bank, bool valid);

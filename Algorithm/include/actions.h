@@ -81,20 +81,19 @@ ActionResult action_update_test_results(SystemContext* ctx);
 
 ActionResult action_observe_periodic(SystemContext* ctx);
 
-ActionResult action_handle_ped_trigger(SystemContext* ctx);
-
 ActionResult action_update_observe_config(SystemContext* ctx, const SystemEvent* event);
 
 ActionResult action_accept_time_sync(SystemContext* ctx, const SystemEvent* event);
 
-ActionResult action_accept_orbit(SystemContext* ctx, const SystemEvent* event);
-
+ActionResult action_accept_mcilwain(SystemContext* ctx, const SystemEvent* event);
 
 ActionResult action_accept_magfield(SystemContext* ctx, const SystemEvent* event);
 
 ActionResult action_finish_observe_full(SystemContext* ctx);
 
 ActionResult action_finish_observe(SystemContext* ctx, const SystemEvent* event);
+
+ActionResult action_complete_observe(SystemContext* ctx);
 
 ActionResult action_finish_observe_alarm(SystemContext* ctx);
 

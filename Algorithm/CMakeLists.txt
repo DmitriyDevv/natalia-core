@@ -6,7 +6,6 @@ target_sources(natalia_algorithm PRIVATE
         src/algorithm.c
         src/state.c
         src/observe.c
-        src/ni_packet.c
         src/ni_format.c
         src/ni_stream.c
         src/observe_science.c
@@ -15,6 +14,10 @@ target_sources(natalia_algorithm PRIVATE
         src/tlm_staging.c
         src/mram_store.c
         src/event_queue.c
+)
+
+target_compile_definitions(natalia_algorithm PUBLIC
+        NATALIA_OBSERVE_EVENTS_WAIT_KT=$<BOOL:${NATALIA_OBSERVE_EVENTS_WAIT_KT}>
 )
 
 target_include_directories(natalia_algorithm PUBLIC

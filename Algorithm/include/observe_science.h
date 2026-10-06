@@ -70,6 +70,8 @@ typedef struct {
     int16_t mcilwain_b;
     int16_t mcilwain_l;
     bool ac1_valid;
+    bool events_wait_kt;
+    bool kt_received;
     uint16_t last_ac1;
     size_t event_count;
     NiEventRecord events[NI_FORMAT_EVENTS_MAX];
@@ -84,6 +86,7 @@ void observe_science_begin(ObserveScience* science,
                            const ObserveScienceLimits* limits);
 void observe_science_request_params(ObserveScience* science, const ObserveScienceParams* params);
 void observe_science_request_final(ObserveScience* science);
+void observe_science_set_events_wait_kt(ObserveScience* science, bool wait);
 bool observe_science_second_needs_telemetry(const ObserveScience* science);
 
 ObserveScienceStatus observe_science_on_event(ObserveScience* science, NiStream* stream,

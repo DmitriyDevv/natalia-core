@@ -26,6 +26,18 @@ BoardStatus transport_send_dump_ack(uint16_t command_id, TransportAckStatus stat
                                     uint32_t packet_count);
 
 BoardStatus transport_send_status(const SystemContext *ctx);
+typedef struct {
+    uint16_t mc_temp;
+    uint16_t pu_temp;
+    uint16_t ped_temp;
+    uint16_t bd_temp;
+    uint16_t pu_voltage;
+    uint16_t pu_current;
+    uint16_t ped_voltage;
+    uint16_t ped_current;
+} TransportMeasurements;
+
+void transport_read_measurements(TransportMeasurements *measurements);
 BoardStatus transport_send_telemetry(const SystemContext *ctx);
 BoardStatus transport_send_version(void);
 BoardStatus transport_send_test_result(const uint8_t *data, uint16_t length);

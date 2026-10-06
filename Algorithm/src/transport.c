@@ -554,14 +554,45 @@ BoardStatus transport_send_status(const SystemContext* ctx) {
                                            payload);
 }
 
-BoardStatus transport_send_telemetry(const SystemContext* ctx) {
-    uint8_t buffer[TRANSPORT_TELEMETRY_SIZE];
-    InstrumentTime rtc = {0};
+void transport_read_measurements(TransportMeasurements* measurements) {
     BoardDigitalTempSample pu_temp = {0};
     BoardDigitalTempSample ped_temp = {0};
     BoardTempSample bd_temp = {0};
     BoardPowerSample pu_power = {0};
     BoardPowerSample ped_power = {0};
+
+    if (measurements == NULL) {
+        return;
+    }
+
+    memset(measurements, 0, sizeof(*measurements));
+
+    /* MC temperature stays 0: the STM32 internal temperature is not exposed by
+     * Board_API. */
+    if (board_read_digital_temp(BOARD_TEMP_SENSOR_PU, &pu_temp) == BOARD_OK) {
+        measurements->pu_temp = transport_temp_milli_to_deci(pu_temp.temperature_milli_c);
+    }
+    if (board_read_digital_temp(BOARD_TEMP_SENSOR_PED, &ped_temp) == BOARD_OK) {
+        measurements->ped_temp = transport_temp_milli_to_deci(ped_temp.temperature_milli_c);
+    }
+    if (board_read_temp(&bd_temp) == BOARD_OK) {
+        measurements->bd_temp = transport_temp_milli_to_deci(bd_temp.temperature_milli_c);
+    }
+
+    if (board_read_power_monitor(BOARD_POWER_MONITOR_PU, &pu_power) == BOARD_OK) {
+        measurements->pu_voltage = transport_clamp_u16(pu_power.bus_voltage_mv);
+        measurements->pu_current = transport_current_ua_to_ma(pu_power.current_ua);
+    }
+    if (board_read_power_monitor(BOARD_POWER_MONITOR_PED, &ped_power) == BOARD_OK) {
+        measurements->ped_voltage = transport_clamp_u16(ped_power.bus_voltage_mv);
+        measurements->ped_current = transport_current_ua_to_ma(ped_power.current_ua);
+    }
+}
+
+BoardStatus transport_send_telemetry(const SystemContext* ctx) {
+    uint8_t buffer[TRANSPORT_TELEMETRY_SIZE];
+    InstrumentTime rtc = {0};
+    TransportMeasurements measurements;
     uint32_t board_status_word = 0U;
     MramStoreConfig cfg = {0};
     MramStoreServiceData svc = {0};
@@ -576,29 +607,15 @@ BoardStatus transport_send_telemetry(const SystemContext* ctx) {
     transport_write_le_u16(&buffer[0], rtc.milliseconds);
     transport_write_le_u32(&buffer[2], rtc.seconds);
 
-    /* Bytes 6-7 (MC temp) stay 0: the STM32 internal temperature is not exposed
-     * by Board_API. */
-    if (board_read_digital_temp(BOARD_TEMP_SENSOR_PU, &pu_temp) == BOARD_OK) {
-        transport_write_le_u16(&buffer[8],
-            transport_temp_milli_to_deci(pu_temp.temperature_milli_c));
-    }
-    if (board_read_digital_temp(BOARD_TEMP_SENSOR_PED, &ped_temp) == BOARD_OK) {
-        transport_write_le_u16(&buffer[10],
-            transport_temp_milli_to_deci(ped_temp.temperature_milli_c));
-    }
-    if (board_read_temp(&bd_temp) == BOARD_OK) {
-        transport_write_le_u16(&buffer[12],
-            transport_temp_milli_to_deci(bd_temp.temperature_milli_c));
-    }
-
-    if (board_read_power_monitor(BOARD_POWER_MONITOR_PU, &pu_power) == BOARD_OK) {
-        transport_write_le_u16(&buffer[14], transport_clamp_u16(pu_power.bus_voltage_mv));
-        transport_write_le_u16(&buffer[16], transport_current_ua_to_ma(pu_power.current_ua));
-    }
-    if (board_read_power_monitor(BOARD_POWER_MONITOR_PED, &ped_power) == BOARD_OK) {
-        transport_write_le_u16(&buffer[18], transport_clamp_u16(ped_power.bus_voltage_mv));
-        transport_write_le_u16(&buffer[20], transport_current_ua_to_ma(ped_power.current_ua));
-    }
+    transport_read_measurements(&measurements);
+    transport_write_le_u16(&buffer[6], measurements.mc_temp);
+    transport_write_le_u16(&buffer[8], measurements.pu_temp);
+    transport_write_le_u16(&buffer[10], measurements.ped_temp);
+    transport_write_le_u16(&buffer[12], measurements.bd_temp);
+    transport_write_le_u16(&buffer[14], measurements.pu_voltage);
+    transport_write_le_u16(&buffer[16], measurements.pu_current);
+    transport_write_le_u16(&buffer[18], measurements.ped_voltage);
+    transport_write_le_u16(&buffer[20], measurements.ped_current);
 
     transport_write_le_u16(&buffer[22], (uint16_t)(ctx->alarm_status & 0xFFFFU));
     transport_write_le_u16(&buffer[24], (uint16_t)(ctx->masked_alarm & 0xFFFFU));
@@ -608,8 +625,11 @@ BoardStatus transport_send_telemetry(const SystemContext* ctx) {
     (void)board_read_power_status(&board_status_word);
     transport_write_le_u16(&buffer[28], (uint16_t)(board_status_word & 0xFFFFU));
 
-    /* Bytes 30-35 (PED status, trigger config, observe settings) are 0 in modes
-     * other than OBSERVE; OBSERVE is not implemented. */
+    if (ctx->state == STATE_OBSERVE) {
+        transport_write_le_u16(&buffer[30], (uint16_t)(ctx->ped.status & 0xFFFFU));
+        transport_write_le_u16(&buffer[32], ctx->observe.trigger_config);
+        transport_write_le_u16(&buffer[34], ctx->observe.observe_params);
+    }
 
     (void)mram_store_load_config(&cfg);
     (void)mram_store_load_service_data(&svc);
@@ -1362,7 +1382,7 @@ static void transport_handle_known_telemetry(SystemContext* ctx,
         if (message->length != TRANSPORT_KT_SP_MCLWAIN_SIZE) {
             return;
         }
-        event.type = EVENT_TLM_ORBIT;
+        event.type = EVENT_TLM_MCILWAIN;
         break;
 
     default:

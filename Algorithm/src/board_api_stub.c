@@ -42,6 +42,7 @@ static uint8_t board_stub_data_write_stalled;
 static uint8_t board_stub_data_link_present = 1U;
 static uint8_t board_stub_data_link_fault;
 static uint8_t board_stub_data_link_opened;
+static uint8_t board_stub_data_link_ready = 1U;
 static BoardNandBlockMap board_stub_mram_block_map[BOARD_STUB_MRAM_COPY_COUNT][2];
 static uint8_t board_stub_mram_block_map_valid[BOARD_STUB_MRAM_COPY_COUNT][2];
 
@@ -56,6 +57,7 @@ static uint8_t board_stub_nand_power_fault[BOARD_STUB_NAND_BANK_COUNT];
 static uint8_t board_stub_test_result_valid[2] = {1U, 1U};
 
 static uint32_t board_stub_rtc_1hz_pending;
+static uint32_t board_stub_time_us;
 static uint32_t board_stub_ped_trigger_pending;
 
 static int32_t board_stub_digital_temp_milli[2] = {25000, 25000};
@@ -68,6 +70,7 @@ static uint8_t board_stub_ped_is_powered = 1U;
 
 #define BOARD_STUB_PED_RECORD_CAPACITY 256U
 #define BOARD_STUB_PED_WRITE_CAPACITY  32U
+#define BOARD_STUB_TIME_STEP_US        100U
 
 static BoardPedRecord board_stub_ped_records[BOARD_STUB_PED_RECORD_CAPACITY];
 static size_t board_stub_ped_record_head;
@@ -224,6 +227,10 @@ void board_stub_set_data_link_fault(void) {
     board_stub_data_link_fault = 1U;
 }
 
+void board_stub_set_data_link_ready(bool ready) {
+    board_stub_data_link_ready = ready ? 1U : 0U;
+}
+
 bool board_stub_data_link_is_open(void) {
     return board_stub_data_link_opened != 0U;
 }
@@ -320,6 +327,7 @@ void board_stub_reset_all(void) {
     board_stub_data_link_present = 1U;
     board_stub_data_link_fault = 0U;
     board_stub_data_link_opened = 0U;
+    board_stub_data_link_ready = 1U;
     (void)memset(board_stub_mram_block_map, 0, sizeof(board_stub_mram_block_map));
     (void)memset(board_stub_mram_block_map_valid, 0, sizeof(board_stub_mram_block_map_valid));
 
@@ -1488,6 +1496,16 @@ BoardStatus board_data_link_take_fault(uint8_t *fault) {
     return BOARD_OK;
 }
 
+BoardStatus board_data_link_ready(uint8_t *ready) {
+    if (ready == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *ready = board_stub_data_link_ready;
+
+    return BOARD_OK;
+}
+
 BoardStatus board_data_link_open(void) {
     board_stub_data_link_opened = 1U;
 
@@ -1518,6 +1536,18 @@ BoardStatus board_read_power_status(uint32_t *power_status) {
     *power_status = 0U;
 
     return BOARD_OK;
+}
+
+uint32_t board_timestamp(void) {
+    board_stub_time_us += BOARD_STUB_TIME_STEP_US;
+
+    return board_stub_time_us;
+}
+
+uint32_t board_elapsed_us(uint32_t timestamp) {
+    board_stub_time_us += BOARD_STUB_TIME_STEP_US;
+
+    return board_stub_time_us - timestamp;
 }
 
 BoardStatus board_rtc_take_1hz_events(uint32_t *event_count) {

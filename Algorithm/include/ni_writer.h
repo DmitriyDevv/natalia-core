@@ -9,6 +9,7 @@
 
 #define NI_WRITER_MRAM_SAVE_PERIOD  128U
 #define NI_WRITER_MAX_PACKET_COUNT  262144UL
+#define NI_WRITER_IDLE_POLL_US      50U
 
 typedef enum {
     NI_WRITER_IDLE = 0,
@@ -33,6 +34,8 @@ typedef struct {
     bool crc_lookup;
     bool save_pending;
     bool finish_requested;
+    bool mram_failed;
+    uint32_t idle_poll_timestamp;
     BoardStatus last_error;
     uint8_t probe[NI_PACKET_BYTES];
 } NiWriter;
@@ -45,5 +48,6 @@ NiWriterState ni_writer_state(const NiWriter* writer);
 uint32_t ni_writer_next_packet(const NiWriter* writer);
 uint16_t ni_writer_last_crc(const NiWriter* writer);
 BoardStatus ni_writer_last_error(const NiWriter* writer);
+bool ni_writer_mram_failed(const NiWriter* writer);
 
 #endif /* NATALIA_CORE_NI_WRITER_H */

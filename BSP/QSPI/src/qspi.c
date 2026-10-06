@@ -5,6 +5,7 @@
 #include "board_config.h"
 #include "qspi_private.h"
 #include "stm32l496xx.h"
+#include "timebase.h"
 
 #define QSPI_FLASH_SIZE_BITS 28UL
 #define QSPI_CHIP_SELECT_HIGH_TIME 2UL
@@ -30,7 +31,7 @@
 #endif
 
 #define QSPI_PRESCALER_VALUE ((BOARD_HCLK_HZ / QSPI_TARGET_HZ) - 1UL)
-#define QSPI_TIMEOUT_LOOPS 8000000UL
+#define QSPI_TIMEOUT_US 50000UL
 #define QSPI_DMA_MAX_TRANSFER_COUNT 0xFFFFUL
 
 typedef enum {
@@ -53,25 +54,26 @@ static volatile BoardStatus qspi_poll_status = BOARD_OK;
 
 static uint8_t qspi_pins_bank = 0U;
 
+void DMA1_CH5_IRQHandler(void);
+void QUADSPI_IRQHandler(void);
+
 static QspiDebugSnapshot qspi_dma_timeout_snapshot;
 static uint8_t qspi_dma_timeout_snapshot_valid = 0U;
 
 static BoardStatus qspi_wait_not_busy(void) {
-    uint32_t timeout = QSPI_TIMEOUT_LOOPS;
+    uint32_t start = timebase_cycles();
 
     while ((QUADSPI->SR & QUADSPI_SR_BUSY) != 0U) {
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= QSPI_TIMEOUT_US) {
             return BOARD_ERR_TIMEOUT;
         }
-
-        --timeout;
     }
 
     return BOARD_OK;
 }
 
 static BoardStatus qspi_wait_flag(uint32_t flag) {
-    uint32_t timeout = QSPI_TIMEOUT_LOOPS;
+    uint32_t start = timebase_cycles();
 
     while ((QUADSPI->SR & flag) == 0U) {
         if ((QUADSPI->SR & QUADSPI_SR_TEF) != 0U) {
@@ -84,11 +86,9 @@ static BoardStatus qspi_wait_flag(uint32_t flag) {
             return BOARD_ERR_TIMEOUT;
         }
 
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= QSPI_TIMEOUT_US) {
             return BOARD_ERR_TIMEOUT;
         }
-
-        --timeout;
     }
 
     return BOARD_OK;
@@ -99,7 +99,7 @@ static uint32_t qspi_fifo_level(void) {
 }
 
 static BoardStatus qspi_wait_fifo_not_empty(void) {
-    uint32_t timeout = QSPI_TIMEOUT_LOOPS;
+    uint32_t start = timebase_cycles();
 
     while (qspi_fifo_level() == 0U) {
         if ((QUADSPI->SR & QUADSPI_SR_TEF) != 0U) {
@@ -112,11 +112,9 @@ static BoardStatus qspi_wait_fifo_not_empty(void) {
             return BOARD_ERR_TIMEOUT;
         }
 
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= QSPI_TIMEOUT_US) {
             return BOARD_ERR_TIMEOUT;
         }
-
-        --timeout;
     }
 
     return BOARD_OK;
@@ -518,7 +516,7 @@ static void qspi_dma_process_qspi_flags(void) {
 
 static BoardStatus qspi_dma_poll_internal(uint8_t* is_done) {
     static QspiAsyncState timeout_state = QSPI_ASYNC_IDLE;
-    static uint32_t timeout = 0U;
+    static uint32_t timeout_start = 0U;
 
     if (is_done == 0) {
         return BOARD_ERR_INVALID_ARG;
@@ -526,7 +524,7 @@ static BoardStatus qspi_dma_poll_internal(uint8_t* is_done) {
 
     if (qspi_dma_state != timeout_state) {
         timeout_state = qspi_dma_state;
-        timeout = QSPI_TIMEOUT_LOOPS;
+        timeout_start = timebase_cycles();
     }
 
     qspi_dma_process_dma_flags();
@@ -534,19 +532,18 @@ static BoardStatus qspi_dma_poll_internal(uint8_t* is_done) {
 
     if (qspi_dma_state != timeout_state) {
         timeout_state = qspi_dma_state;
-        timeout = QSPI_TIMEOUT_LOOPS;
+        timeout_start = timebase_cycles();
     }
 
     if ((qspi_dma_state == QSPI_ASYNC_BUSY) ||
         (qspi_dma_state == QSPI_ASYNC_WAIT_TCF)) {
-        if (timeout == 0U) {
+        if (timebase_us_since(timeout_start) >= QSPI_TIMEOUT_US) {
             qspi_dma_abort();
             timeout_state = QSPI_ASYNC_IDLE;
             *is_done = 1U;
             return BOARD_ERR_TIMEOUT;
         }
 
-        --timeout;
         *is_done = 0U;
         return BOARD_OK;
     }
@@ -567,10 +564,10 @@ static BoardStatus qspi_dma_poll_internal(uint8_t* is_done) {
 static BoardStatus qspi_dma_wait_done(void) {
     BoardStatus status;
     uint8_t is_done = 0U;
-    uint32_t timeout = QSPI_TIMEOUT_LOOPS;
+    uint32_t start = timebase_cycles();
 
     while (is_done == 0U) {
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= QSPI_TIMEOUT_US) {
             qspi_dma_abort();
             return BOARD_ERR_TIMEOUT;
         }
@@ -579,8 +576,6 @@ static BoardStatus qspi_dma_wait_done(void) {
         if (status != BOARD_OK) {
             return status;
         }
-
-        --timeout;
     }
 
     return BOARD_OK;
@@ -1029,15 +1024,16 @@ BoardStatus qspi_auto_poll(const QspiCommand* command,
                            uint8_t match_mask) {
     BoardStatus status;
     uint8_t is_done = 0U;
-    uint32_t timeout = QSPI_TIMEOUT_LOOPS;
+    uint32_t start;
 
     status = qspi_auto_poll_start(command, match_value, match_mask);
     if (status != BOARD_OK) {
         return status;
     }
 
+    start = timebase_cycles();
     while (is_done == 0U) {
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= QSPI_TIMEOUT_US) {
             QUADSPI->CR &= ~(QUADSPI_CR_APMS |
                 QUADSPI_CR_SMIE |
                 QUADSPI_CR_TEIE);
@@ -1057,7 +1053,6 @@ BoardStatus qspi_auto_poll(const QspiCommand* command,
             return status;
         }
 
-        --timeout;
     }
 
     return BOARD_OK;
@@ -1092,10 +1087,6 @@ BoardStatus qspi_debug_last_dma_timeout(QspiDebugSnapshot* snapshot, uint8_t* is
     *is_valid = qspi_dma_timeout_snapshot_valid;
 
     return BOARD_OK;
-}
-
-void DMA1_Channel5_IRQHandler(void) {
-    qspi_dma_process_dma_flags();
 }
 
 void DMA1_CH5_IRQHandler(void) {

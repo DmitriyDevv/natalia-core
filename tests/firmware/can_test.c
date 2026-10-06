@@ -209,7 +209,7 @@ static void log_unican_stats_periodic(uint32_t* last_log_ms) {
 }
 
 int main(void) {
-    SystemContext ctx;
+    static SystemContext ctx;
     SystemState last_state;
     BoardStatus status;
     BoardStatus last_transport_status;

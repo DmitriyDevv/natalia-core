@@ -48,9 +48,8 @@ main.c / tests/            <- вызывают Algorithm
 | `src/mram_store.c`     |        283 | Структуры и доступ к конфигурации и служебным данным в MRAM.                 |
 | `src/event_queue.c`    |        207 | Очередь событий фиксированного размера.                                                 |
 | `src/alarm_monitor.c`  |        158 | Цикл контроля параметров 20 с и постановка аварийных признаков.       |
-| `src/observe.c`        |        120 | Оркестровка режима наблюдений (каркас).                                                   |
+| `src/observe.c`        |        ~470 | Путь данных режима наблюдений: записи ПЭД → `observe_science` → `ni_stream` → `ni_writer`, КТ, завершение. |
 | `src/tlm_staging.c`    |         50 | Кольцевой буфер полезной нагрузки телеметрических сообщений.         |
-| `src/ni_packet.c`      |         14 | Старый интерфейс, который вызывает `observe.c`. **Все тела пустые**; будет заменён цепочкой ниже. |
 | `src/ni_format.c`      |        295 | Все 8 форматов НИ v6_1 (00h–07h) с CRC.                                               |
 | `src/ni_stream.c`      |        190 | Пакет НИ: заголовок, сквозная укладка кадров, AAAAh, CRC, цепочка CRC.                |
 | `src/observe_science.c`|        465 | События, гистограммы, секундные и КТ-форматы → поток пакетов.                         |
@@ -125,16 +124,13 @@ if (board_rtc_take_1hz_events(&count) == BOARD_OK) {
     while (count > 0U) { push_back_type(EVENT_RTC_1HZ); --count; }
 }
 
-if (ctx->state == STATE_OBSERVE) {
-    if (board_ped_take_trigger_events(&count) == BOARD_OK) {
-        while (count > 0U) { push_back_type(EVENT_PED_TRIGGER); --count; }
-    }
-}
 ```
 
 Функции `board_*_take_*` работают на осушение: возвращают накопленное число и
-обнуляют счётчик. Секундные тики собираются во всех режимах, триггеры ПЭД —
-только в `OBSERVE`, поэтому в остальных режимах они не засоряют очередь.
+обнуляют счётчик. Секундные тики собираются во всех режимах. События ПЭД в
+очередь не попадают: при 100 кГц она переполнилась бы за миллисекунды. OBSERVE
+забирает записи ПЭД (события и отметки секунд) из кольца пачками в своём поллере
+(раздел 12).
 
 ### `algorithm_process_events()`
 
@@ -196,14 +192,14 @@ uint32_t system_event_queue_get_overflow_count(void);
 | `EVENT_CMD_DUMP`, `EVENT_CMD_SET_CFG`, `EVENT_CMD_ERASE`                    | `transport.c:1330`                    | работает                                                                              |
 | `EVENT_CMD_TEST`, `EVENT_CMD_TEST_RESULT`, `EVENT_CMD_SHUTDOWN`, `EVENT_CMD_RESET_ALARM` | `transport.c:1330`       | работает                                                                              |
 | `EVENT_CMD_VERSION_REQ`                                     | `transport.c:1330`                    | работает                                                                              |
-| `EVENT_TLM_TIME_SYNC`, `EVENT_TLM_ORBIT`, `EVENT_TLM_MAGFIELD`              | `transport.c:1372`                    | работает                                                                              |
+| `EVENT_TLM_TIME_SYNC`, `EVENT_TLM_MCILWAIN`, `EVENT_TLM_MAGFIELD`            | `transport.c:1372`                    | работает                                                                              |
 | `EVENT_BOOT`, `EVENT_INIT_DONE`                             | `main.c:160` (`pump_internal_event`)  | работает                                                                              |
 | `EVENT_ERASE_DONE`                                          | `algorithm.c:21`                      | работает                                                                              |
 | `EVENT_TEST_DONE`                                           | `algorithm.c:92`                      | работает                                                                              |
 | `EVENT_DUMP_DONE`                                           | `algorithm.c:297`                     | работает                                                                              |
 | `EVENT_NAND_FULL`                                           | `algorithm.c:417`                     | работает                                                                              |
 | `EVENT_RTC_1HZ`                                             | `algorithm.c:489`                     | работает — сбор в главном цикле                                     |
-| `EVENT_PED_TRIGGER`                                         | `algorithm.c:498`                     | работает — только в `OBSERVE`                                            |
+| `EVENT_OBSERVE_DONE`                                        | `observe.c`                           | работает — конец сеанса (после КУ 6 / «Выключение») или сбой записи |
 | `EVENT_MASKED_ALARM_SET`                                    | `alarm_monitor.c:41` (`alarm_raise`)  | работает — часть признаков, см. раздел 11                     |
 | `EVENT_INIT_FAIL`                                           | `main.c:160`                          | при отказе`board_comm_init`                                                 |
 | `EVENT_MASKED_ALARM_CLEAR`                                  | —                                    | **не порождается**: признаки аварий по документу сами не сбрасываются |
@@ -392,7 +388,7 @@ typedef struct {
 | Завершение режимов | `action_finish_erase`, `action_finish_test`, `action_finish_dump`, `action_finish_observe`, `action_finish_observe_full` + варианты `*_alarm`                                           |
 | Служебные данные     | `action_update_service_data`, `action_update_erase_service_data`, `action_update_dump_service_data`, `action_update_test_service_data`, `action_update_test_results`, `action_fix_dump_results` |
 | Состояние NAND             | `action_update_nand_state`, `action_clear_nand_full_flag`                                                                                                                                       |
-| Наблюдения                | `action_observe_periodic`, `action_handle_ped_trigger`, `action_update_observe_config`, `action_accept_time_sync`, `action_accept_orbit`, `action_accept_magfield`                              |
+| Наблюдения                | `action_observe_periodic`, `action_update_observe_config`, `action_accept_time_sync`, `action_accept_mcilwain`, `action_accept_magfield`, `action_complete_observe`                              |
 
 ---
 
@@ -452,7 +448,7 @@ typedef struct {
 | -------- | ------------------------------------------------------- | ---------: | --------------------- |
 | `0xF210` | Время, орбита, ориентация          |        125 | `EVENT_TLM_TIME_SYNC` |
 | `0xF221` | Геомагнитное поле, ориентация |         76 | `EVENT_TLM_MAGFIELD`  |
-| `0x0E00` | Параметры Мак-Илвайна                |         24 | `EVENT_TLM_ORBIT`     |
+| `0x0E00` | Параметры Мак-Илвайна                |         24 | `EVENT_TLM_MCILWAIN`  |
 
 КТ ставятся в очередь независимо от режима, но обрабатываются только в
 `OBSERVE`; остальные режимы их молча отбрасывают.
@@ -664,43 +660,50 @@ Board_API отдаёт температуру в милли-°C, напряже�
 
 ## 12. Режим наблюдений
 
-**Не финальный.** Каркас режима есть; научная часть реализована отдельными
-модулями (`observe_science`, `ni_format`, `ni_stream`, `ni_writer`), но к режиму
-не подключена.
+Решения, которые документы оставляют открытыми, собраны в
+`docs/OBSERVE_ASSUMPTIONS.md` (раздел «Режим», M1–M10).
 
-`observe.c` реализует расписание форматов по секундному тику:
+### Поток данных
 
+```
+ прерывания (ped_reg)                    проход суперцикла, observe_poll()
+ PED_TG  → событие   ─┐                  1. ≤ 64 записей из кольца (пачками по 16):
+ RTC_OUT → секунда    ├→ кольцо 2048        событие → observe_science_on_event
+           + счётчики ┘                     секунда → observe_science_on_second (+ «Телеметрия»)
+                                         2. отложенные КТ → форматы 05h / 06h / 07h
+                                         3. ni_writer_poll: пакет → NAND
+                                         4. неисправности ПЭД → аварии
+```
 
-| Момент                                                       | Формат                                                                 |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| Первый тик сессии                                   | `NI_FORMAT_TELEMETRY` (04h)                                                  |
-| Каждую секунду                                        | `NI_FORMAT_COUNTERS` (01h)                                                   |
-| Каждую секунду, если`spectrum_mode == 1` / `== 2` | `NI_FORMAT_SPECTRUM_1` / `_2` (02h/03h)                                      |
-| Каждые 20 с и при смене конфигурации   | `NI_FORMAT_TELEMETRY` (04h)                                                  |
-| При приёме КТ                                           | `NI_FORMAT_SYNC_ORBIT_ATTITUDE` / `_GEOMAGNETIC` / `_MCILWAIN` (05h/06h/07h) |
+Если в потоке пакетов нет места (`OBSERVE_SCIENCE_NO_ROOM`), запись не теряется:
+она остаётся в пачке и обрабатывается на следующем проходе, кольцо перестаёт
+освобождаться, и ПЭД ждёт (D7). Без готового пакета `ni_writer` опрашивает NAND
+не чаще раза в `NI_WRITER_IDLE_POLL_US` (50 мкс, `board_elapsed_us`).
 
-`observe_start_session()` разбирает слово параметров наблюдений на поля
-`events_mode` (биты 0–2), `events_nmax_sel` (3–5), `spectrum_mode` (6–7),
-`spectrum_nhist_sel` (8–10).
+### Этапы (`ObserveStage`)
 
-Ключевое: **`observe.c` вызывает `ni_packet.c`, а там три пустые функции**
-(`ni_packet_session_begin`, `ni_packet_session_end`, `ni_packet_write_format`).
-Поэтому в текущем режиме расписание форматов работает, а данные не формируются.
+| Этап | Что происходит |
+|---|---|
+| `ENTER` | После КУ 4 (квитанция сразу): банк NAND включён и подключён, карта плохих блоков загружена, ПЭД настроена по битам 2–4 и регистрам 80h/81h. `ni_writer` ищет место продолжения (по шагу за проход). Затем номер сеанса +1 (сразу в MRAM), `ni_stream_begin`, `observe_science_begin` (Bmin/Lmin/Lmax/n(AC1)max из MRAM), `board_ped_acquisition_start` → `ACTIVE`. |
+| `ACTIVE` | Поток данных выше. КУ 5: биты 2–4 и регистры ПЭД — сразу, параметры — со следующей секунды (T4). |
+| `FINISHING` | После КУ 6 / «Выключение» (квитанция сразу): ждём следующую отметку секунды, на ней пишутся «Счетчики», «Спектр» и «Телеметрия». Без отметки за `OBSERVE_FINISH_TIMEOUT_S` (3) тиков RTC — завершение без них. |
+| `FLUSHING` | Сбор остановлен, последний пакет дополнен AAAAh, `ni_writer` дописывает и сохраняет счётчик в MRAM → `EVENT_OBSERVE_DONE` → ПЭД и банк по битам КУ 6 → DUTY (или SHUTDOWN), ТС «Статус». |
+| `EXIT_FULL` | Банк заполнен (`ni_writer` → FULL) → `EVENT_NAND_FULL`: сбор остановлен, банк по биту 5, ПЭД по битам 6–7 КУ 4, признак «банк полон» → DUTY. |
+| `EXIT_ALARM` | Сбой записи NAND → `ALARM_NAND_PR`, сбой MRAM → `ALARM_MRAM`; неисправности ПЭД → `ALARM_PED_PS` / `_DIR` / `_ST`. Незамаскированная авария → недописанный пакет отбрасывается (P2) → ALARM. |
 
-При этом сами форматы и пакеты уже реализованы и протестированы:
-`observe_science` принимает события, секундные тики и КТ и пишет кадры форматов
-(`ni_format`) в поток пакетов НИ (`ni_stream`: 1024 слова, заголовок 7 слов,
-CRC16 ядра, AAAAh в конце сеанса), а `ni_writer` пишет готовые пакеты в NAND.
-Осталось заменить в режиме вызовы `ni_packet` на эту цепочку — шаг 4 в
-`docs/OBSERVE_ASSUMPTIONS.md`.
+КУ 6 на этапе `ENTER` (сеанс ещё не начат) завершает режим сразу.
 
-Формат `NI_FORMAT_EVENTS` (00h) в расписании отсутствует. Само событие
-`EVENT_PED_TRIGGER` теперь порождается — оно собирается в главном цикле и
-обрабатывается `action_handle_ped_trigger`, — но привязки формата событий к
-триггеру в расписании `observe.c` нет (в `observe_science` формат «События»
-есть — он заработает после подключения).
+Формат «События» не пишется, пока в сеансе не принята хотя бы одна КТ (любая из
+трёх), — решение владельца, в документах его нет (E6 в `OBSERVE_ASSUMPTIONS.md`).
+Флаг CMake `NATALIA_OBSERVE_EVENTS_WAIT_KT`, по умолчанию ON; OFF — «События»
+пишутся сразу по параметрам наблюдений.
 
----
+### Формат «Телеметрия»
+
+Измерения те же, что в ТС «Телеметрия» (`transport_read_measurements`); статус
+ПЭД читается из ПЭД, если она включена. В ТС «Телеметрия» в режиме наблюдений
+заполняются байты 30–35: статус ПЭД (младшее слово), конфигурация триггера,
+параметры наблюдений.
 
 ## 13. Хостовая заглушка Board_API
 
@@ -895,7 +898,7 @@ ctest --test-dir cmake-build-tests --output-on-failure
 | `test_dump`          | Вывод по USB, ACK с числом пакетов, счётчик последнего пакета                                       |
 | `test_shutdown`      | Сохранение служебных данных, отказ записи, допустимость команд                            |
 | `test_mram_store`    | Загрузку/запись/восстановление, упаковку`Nerr` в 24 бита, проверку аргументов        |
-| `test_observe`       | Расписание форматов и защёлкивание КТ — вызовом`observe_*` напрямую, минуя автомат |
+| `test_observe_mode`  | Режим OBSERVE через автомат на заглушке: последовательность форматов, КТ, КУ 5, КУ 6 со следующей секундой и по таймауту, продолжение банка вторым сеансом, лимит записей за проход, сбой NAND → ALARM, заполнение банка → DUTY |
 
 Не покрыто, потому что кода нет: формирование пакетов НИ, режим наблюдений
 целиком, аварийные признаки 0, 3, 9, 10, 12, 13, 14.

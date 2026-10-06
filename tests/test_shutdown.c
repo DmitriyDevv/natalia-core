@@ -188,7 +188,7 @@ static void telemetry_ignored_in_shutdown(void) {
     begin_test(&ctx, STATE_SHUTDOWN);
 
     memset(&event, 0, sizeof(event));
-    event.type = EVENT_TLM_ORBIT;
+    event.type = EVENT_TLM_MCILWAIN;
     assert(system_event_queue_push_back(&event));
     algorithm_process_events(&ctx);
 

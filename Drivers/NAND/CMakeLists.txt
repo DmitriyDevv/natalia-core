@@ -1,9 +1,7 @@
 add_library(natalia_nand STATIC
         src/nand_mt29f.c
         src/nand_mt29f_commands.c
-        src/nand_bbm.c
         src/nand_storage.c
-        src/nand_test.c
 )
 
 target_include_directories(natalia_nand PUBLIC

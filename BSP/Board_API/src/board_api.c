@@ -1913,8 +1913,6 @@ BoardStatus board_ped_take_trigger_events(uint32_t* event_count) {
     return BOARD_OK;
 }
 
-#define BOARD_PED_TAKE_CHUNK 32U
-
 BoardStatus board_ped_acquisition_start(void) {
     return ped_reg_acquisition_start();
 }
@@ -1923,47 +1921,20 @@ BoardStatus board_ped_acquisition_stop(void) {
     return ped_reg_acquisition_stop();
 }
 
-BoardStatus board_ped_take_records(BoardPedRecord* records, size_t capacity, size_t* count) {
-    PedRegRecord chunk[BOARD_PED_TAKE_CHUNK];
-    size_t total = 0U;
-    size_t request;
-    size_t taken;
-    size_t i;
-    size_t word;
-    BoardStatus status;
+_Static_assert(sizeof(BoardPedRecord) == sizeof(PedRegRecord), "PED record layout");
+_Static_assert(offsetof(BoardPedRecord, kind) == offsetof(PedRegRecord, kind), "PED record layout");
+_Static_assert(offsetof(BoardPedRecord, flags) == offsetof(PedRegRecord, flags), "PED record layout");
+_Static_assert(offsetof(BoardPedRecord, data) == offsetof(PedRegRecord, data), "PED record layout");
+_Static_assert(offsetof(BoardPedRecord, rtc_seconds) == offsetof(PedRegRecord, rtc_seconds),
+               "PED record layout");
+_Static_assert(BOARD_PED_RECORD_DATA_WORDS == PED_REG_RECORD_DATA_WORDS, "PED record layout");
 
+BoardStatus board_ped_take_records(BoardPedRecord* records, size_t capacity, size_t* count) {
     if ((count == 0) || ((records == 0) && (capacity > 0U))) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    *count = 0U;
-
-    do {
-        request = capacity - total;
-        if (request > BOARD_PED_TAKE_CHUNK) {
-            request = BOARD_PED_TAKE_CHUNK;
-        }
-
-        status = ped_reg_take_records(chunk, request, &taken);
-        if (status != BOARD_OK) {
-            return status;
-        }
-
-        for (i = 0U; i < taken; ++i) {
-            records[total + i].kind = chunk[i].kind;
-            records[total + i].flags = chunk[i].flags;
-            for (word = 0U; word < BOARD_PED_RECORD_DATA_WORDS; ++word) {
-                records[total + i].data[word] = chunk[i].data[word];
-            }
-            records[total + i].rtc_seconds = chunk[i].rtc_seconds;
-        }
-
-        total += taken;
-    } while ((taken == request) && (total < capacity));
-
-    *count = total;
-
-    return BOARD_OK;
+    return ped_reg_take_records_raw(records, capacity, count);
 }
 
 BoardStatus board_ped_write_register(uint8_t address, uint16_t value) {
@@ -2155,6 +2126,14 @@ BoardStatus board_rtc_get_time(InstrumentTime* time) {
 
 BoardStatus board_rtc_set_time(const InstrumentTime* time) {
     return rtc_set_time(time);
+}
+
+uint32_t board_timestamp(void) {
+    return timebase_cycles();
+}
+
+uint32_t board_elapsed_us(uint32_t timestamp) {
+    return timebase_us_since(timestamp);
 }
 
 BoardStatus board_rtc_take_1hz_events(uint32_t* event_count) {
@@ -2376,6 +2355,10 @@ BoardStatus board_data_is_ready(uint8_t* is_ready) {
      (!defined(NATALIA_ENABLE_BOARD_TEST_HOOKS) || (NATALIA_ENABLE_BOARD_TEST_HOOKS == 0)))
 
 #define BOARD_DATA_LINK_FLUSH_MS (50UL)
+#define BOARD_DATA_LINK_DRAIN_MS (200UL)
+#define BOARD_DATA_LINK_HOST_SETTLE_MS (2000UL)
+
+static uint32_t board_data_link_open_ms;
 
 BoardStatus board_data_link_present(uint8_t* present) {
     GpioLevel level = GPIO_LEVEL_HIGH;
@@ -2411,7 +2394,12 @@ BoardStatus board_data_link_open(void) {
 #if defined(NATALIA_ENABLE_FTDI_DRIVER) && (NATALIA_ENABLE_FTDI_DRIVER != 0)
     if (ftdi_is_initialized() == 0U) {
         status = ftdi_init();
+        board_data_link_open_ms = timebase_millis();
+    } else {
+        board_data_link_open_ms = timebase_millis() - BOARD_DATA_LINK_HOST_SETTLE_MS;
     }
+#else
+    board_data_link_open_ms = timebase_millis() - BOARD_DATA_LINK_HOST_SETTLE_MS;
 #endif
 
     if (status != BOARD_OK) {
@@ -2421,12 +2409,22 @@ BoardStatus board_data_link_open(void) {
     return gpio_rising_edge_irq_enable(BOARD_PIN_PU_USB_VBUS);
 }
 
+BoardStatus board_data_link_ready(uint8_t* ready) {
+    if (ready == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *ready = timebase_elapsed(board_data_link_open_ms, BOARD_DATA_LINK_HOST_SETTLE_MS) ? 1U : 0U;
+
+    return BOARD_OK;
+}
+
 BoardStatus board_data_link_close(void) {
     (void)gpio_falling_edge_irq_disable(BOARD_PIN_PU_USB_VBUS);
 
 #if defined(NATALIA_ENABLE_FTDI_DRIVER) && (NATALIA_ENABLE_FTDI_DRIVER != 0)
-    if (ftdi_is_initialized() != 0U) {
-        (void)ftdi_flush(BOARD_DATA_LINK_FLUSH_MS);
+    if ((ftdi_is_initialized() != 0U) && (ftdi_flush(BOARD_DATA_LINK_FLUSH_MS) == BOARD_OK)) {
+        timebase_delay_ms_blocking(BOARD_DATA_LINK_DRAIN_MS);
     }
     return ftdi_deinit();
 #else
@@ -2460,6 +2458,16 @@ BoardStatus board_data_link_open(void) {
     return BOARD_OK;
 }
 
+BoardStatus board_data_link_ready(uint8_t* ready) {
+    if (ready == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *ready = 1U;
+
+    return BOARD_OK;
+}
+
 BoardStatus board_data_link_close(void) {
     return BOARD_OK;
 }
@@ -2487,6 +2495,16 @@ BoardStatus board_data_link_take_fault(uint8_t* fault) {
 }
 
 BoardStatus board_data_link_open(void) {
+    return BOARD_ERR_UNSUPPORTED;
+}
+
+BoardStatus board_data_link_ready(uint8_t* ready) {
+    if (ready == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *ready = 0U;
+
     return BOARD_ERR_UNSUPPORTED;
 }
 

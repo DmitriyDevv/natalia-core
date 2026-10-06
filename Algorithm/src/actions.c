@@ -295,6 +295,121 @@ static void reset_bank_progress(MramStoreServiceData* service_data, NandBank ban
     }
 }
 
+#define OBSERVE_PED_REG_TRIGGER   0x80U
+#define OBSERVE_PED_REG_THRESHOLD 0x81U
+
+static ActionResult raise_ped_start_fault(SystemContext* ctx) {
+    uint32_t faults = 0U;
+
+    (void)board_ped_take_faults(&faults);
+
+    if ((faults & BOARD_PED_FAULT_READY) != 0U) {
+        alarm_set(ctx, ALARM_PED_DIR);
+    } else if ((faults & BOARD_PED_FAULT_STATUS) != 0U) {
+        alarm_set(ctx, ALARM_PED_ST);
+    } else {
+        alarm_set(ctx, ALARM_PED_PS);
+    }
+
+    return ACTION_ALARM;
+}
+
+static ActionResult apply_observe_ped_config(SystemContext* ctx, bool power, bool sleep,
+                                             bool registration, uint16_t trigger_config,
+                                             uint16_t observe_params) {
+    uint8_t is_powered = 0U;
+    bool inhibit = sleep || !registration;
+    ActionResult result;
+
+    if (!power) {
+        if (require_ok(board_ped_set_inhibit(1U)) == ACTION_OK) {
+            ctx->ped.inhibit_enabled = true;
+        }
+
+        result = require_ok(board_ped_power_off());
+        if (result != ACTION_OK) {
+            return result;
+        }
+
+        ctx->ped.is_powered = false;
+        ctx->ped.sleep_enabled = false;
+        ctx->ped.status = 0U;
+        return ACTION_OK;
+    }
+
+    result = require_ok(board_ped_is_powered(&is_powered));
+    if (result != ACTION_OK) {
+        return result;
+    }
+
+    if ((is_powered == 0U) && (board_ped_power_on() != BOARD_OK)) {
+        ctx->ped.is_powered = false;
+        return raise_ped_start_fault(ctx);
+    }
+
+    result = confirm_ped_powered(ctx);
+    if (result != ACTION_OK) {
+        return result;
+    }
+
+    if ((board_ped_write_register(OBSERVE_PED_REG_TRIGGER, trigger_config) != BOARD_OK) ||
+        (board_ped_write_register(OBSERVE_PED_REG_THRESHOLD,
+                                  (uint16_t)((observe_params >> 12U) & 0x000FU)) != BOARD_OK)) {
+        return raise_ped_start_fault(ctx);
+    }
+
+    result = require_ok(board_ped_set_sleep(sleep ? 1U : 0U));
+    if (result != ACTION_OK) {
+        return result;
+    }
+    ctx->ped.sleep_enabled = sleep;
+
+    result = require_ok(board_ped_set_inhibit(inhibit ? 1U : 0U));
+    if (result != ACTION_OK) {
+        return result;
+    }
+    ctx->ped.inhibit_enabled = inhibit;
+
+    return ACTION_OK;
+}
+
+static ActionResult release_observe_ped(SystemContext* ctx, bool power, bool sleep) {
+    ActionResult result;
+
+    result = require_ok(board_ped_set_inhibit(1U));
+    if (result == ACTION_OK) {
+        ctx->ped.inhibit_enabled = true;
+    }
+
+    if (!power) {
+        result = require_ok(board_ped_power_off());
+        if (result == ACTION_OK) {
+            ctx->ped.is_powered = false;
+            ctx->ped.sleep_enabled = false;
+            ctx->ped.status = 0U;
+        }
+        return result;
+    }
+
+    if (!ctx->ped.is_powered) {
+        if (board_ped_power_on() != BOARD_OK) {
+            return raise_ped_start_fault(ctx);
+        }
+
+        result = confirm_ped_powered(ctx);
+        if (result != ACTION_OK) {
+            return result;
+        }
+    }
+
+    result = require_ok(board_ped_set_sleep(sleep ? 1U : 0U));
+    if (result == ACTION_OK) {
+        ctx->ped.sleep_enabled = sleep;
+    }
+
+    return result;
+}
+
 ActionResult action_init_hardware(void) {
     return require_ok(board_init_hardware());
 }
@@ -604,8 +719,9 @@ ActionResult action_recalc_masked_alarm(SystemContext* ctx) {
 }
 
 ActionResult action_start_observe(SystemContext* ctx, const SystemEvent* event) {
+    const CmdObserveStart* cmd;
+    ObserveContext* observe;
     NandRuntimeState* nand;
-    NandBank bank;
     ActionResult result;
 
     if ((ctx == NULL) || (event == NULL)) {
@@ -617,86 +733,53 @@ ActionResult action_start_observe(SystemContext* ctx, const SystemEvent* event) 
         return result;
     }
 
-    bank = event->command.observe_start.bank;
-    if (!is_valid_bank(bank)) {
+    cmd = &event->command.observe_start;
+    if (!is_valid_bank(cmd->bank)) {
         return ACTION_ERR_CONTENT;
     }
 
-    nand = nand_state(ctx, bank);
+    nand = nand_state(ctx, cmd->bank);
     if ((nand != NULL) && nand->is_full) {
         return ACTION_ERR_CONTENT;
     }
 
-    ctx->observe.bank = bank;
-    ctx->observe.power_after_done = event->command.observe_start.power_after_done;
-    ctx->observe.acquisition_period_ticks = event->command.observe_start.acquisition_period_ticks;
-    ctx->observe.observe_params = event->command.observe_start.observe_params;
-    ctx->observe.trigger_config = event->command.observe_start.trigger_config;
-    ctx->observe.events_written = 0U;
-    ctx->observe.packet_index = 0U;
-    ctx->observe.committed_packet_count = 0U;
-    (void)memset(ctx->observe.packet_buffer, 0, sizeof(ctx->observe.packet_buffer));
-    ctx->observe.registration_enabled = false;
-    ctx->observe.finish_requested = false;
-    ctx->observe.pending_write = false;
-    ctx->observe.write_active = false;
-    ctx->observe.operation_failed = false;
-    ctx->observe.finish_target_state = STATE_DUTY;
-    ctx->observe.stage = OBSERVE_STAGE_ENTER;
+    observe = &ctx->observe;
+    (void)memset(observe, 0, sizeof(*observe));
+    observe->bank = cmd->bank;
+    observe->bank_power_after_full = cmd->power_after_done;
+    observe->ped_power_after_full = cmd->ped_power_after_full;
+    observe->ped_sleep_after_full = cmd->ped_sleep_after_full;
+    observe->ped_power_enabled = cmd->ped_power_enabled;
+    observe->ped_sleep_enabled = cmd->ped_sleep_enabled;
+    observe->registration_enabled = cmd->registration_enabled;
+    observe->observe_params = cmd->observe_params;
+    observe->trigger_config = cmd->trigger_config;
+    observe->events_wait_kt = (NATALIA_OBSERVE_EVENTS_WAIT_KT != 0);
+    observe->finish_target_state = STATE_DUTY;
+    observe->stage = OBSERVE_STAGE_ENTER;
 
-    result = prepare_single_nand_bank(ctx, bank);
-    if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        cleanup_failed_mode_start(ctx, bank, true);
-        return result;
+    result = prepare_single_nand_bank(ctx, cmd->bank);
+
+    if (result == ACTION_OK) {
+        result = require_ok(nand_map_load(bank_id(cmd->bank)));
     }
 
-    result = require_ok(nand_map_load(bank_id(bank)));
-    if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        cleanup_failed_mode_start(ctx, bank, true);
-        return result;
+    if (result == ACTION_OK) {
+        result = apply_observe_ped_config(ctx, cmd->ped_power_enabled, cmd->ped_sleep_enabled,
+                                          cmd->registration_enabled, cmd->trigger_config,
+                                          cmd->observe_params);
     }
 
-    result = require_ok(board_nand_open_write(bank_id(bank), 0U));
-    if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        cleanup_failed_mode_start(ctx, bank, true);
-        return result;
+    if ((result == ACTION_OK) && (observe_begin(ctx) != BOARD_OK)) {
+        alarm_set(ctx, ni_writer_mram_failed(&observe->writer) ? ALARM_MRAM : ALARM_NAND_PR);
+        result = ACTION_ALARM;
     }
 
-    result = require_ok(board_ped_power_on());
     if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        cleanup_failed_mode_start(ctx, bank, true);
+        observe->stage = OBSERVE_STAGE_EXIT_ALARM;
+        cleanup_failed_mode_start(ctx, cmd->bank, true);
         return result;
     }
-
-    result = confirm_ped_powered(ctx);
-    if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        cleanup_failed_mode_start(ctx, bank, true);
-        return result;
-    }
-
-    result = require_ok(board_ped_reg_init());
-    if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        cleanup_failed_mode_start(ctx, bank, true);
-        return result;
-    }
-
-    result = require_ok(board_ped_set_inhibit(0U));
-    if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        cleanup_failed_mode_start(ctx, bank, true);
-        return result;
-    }
-
-    ctx->ped.inhibit_enabled = false;
-    ctx->observe.registration_enabled = true;
-    observe_start_session(ctx);
-    ctx->observe.stage = OBSERVE_STAGE_ACTIVE;
 
     return ACTION_OK;
 }
@@ -911,6 +994,7 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
     ctx->dump.tx_watch_bytes = 0U;
     ctx->dump.tx_stall_seconds = 0U;
     ctx->dump.tx_attempted = false;
+    ctx->dump.link_ready = false;
     (void)memset(ctx->dump.packet_buffer, 0, sizeof(ctx->dump.packet_buffer));
     ctx->dump.operation_failed = false;
     ctx->dump.finish_requested = false;
@@ -1316,46 +1400,41 @@ ActionResult action_observe_periodic(SystemContext* ctx) {
         return ACTION_ERR_CONTENT;
     }
 
-    observe_process_rtc_tick(ctx);
-
-    return ACTION_OK;
-}
-
-ActionResult action_handle_ped_trigger(SystemContext* ctx) {
-    if (ctx == NULL) {
-        return ACTION_ERR_CONTENT;
-    }
-
-    if (!ctx->observe.registration_enabled) {
-        return ACTION_OK;
-    }
+    observe_on_rtc_tick(ctx);
 
     return ACTION_OK;
 }
 
 ActionResult action_update_observe_config(SystemContext* ctx, const SystemEvent* event) {
+    const CmdObserveCtrl* cmd;
+    ObserveScienceParams params;
     ActionResult result;
 
     if ((ctx == NULL) || (event == NULL)) {
         return ACTION_ERR_CONTENT;
     }
 
-    result = require_ok(board_ped_set_inhibit(event->command.observe_ctrl.inhibit_enabled ? 1U : 0U));
+    if ((ctx->observe.stage != OBSERVE_STAGE_ENTER) && (ctx->observe.stage != OBSERVE_STAGE_ACTIVE)) {
+        return ACTION_ERR_CONTENT;
+    }
+
+    cmd = &event->command.observe_ctrl;
+    if (!observe_science_decode_params(cmd->observe_params, &params)) {
+        return ACTION_ERR_CONTENT;
+    }
+
+    result = apply_observe_ped_config(ctx, cmd->ped_power_enabled, cmd->sleep_enabled,
+                                      cmd->registration_enabled, cmd->trigger_config,
+                                      cmd->observe_params);
     if (result != ACTION_OK) {
         return result;
     }
-    ctx->ped.inhibit_enabled = event->command.observe_ctrl.inhibit_enabled;
-    ctx->observe.registration_enabled = !event->command.observe_ctrl.inhibit_enabled;
 
-    result = require_ok(board_ped_set_sleep(event->command.observe_ctrl.sleep_enabled ? 1U : 0U));
-    if (result != ACTION_OK) {
-        return result;
-    }
-    ctx->ped.sleep_enabled = event->command.observe_ctrl.sleep_enabled;
-
-    ctx->observe.observe_params = event->command.observe_ctrl.observe_params;
-    ctx->observe.trigger_config = event->command.observe_ctrl.trigger_config;
-    observe_note_config_changed(ctx);
+    ctx->observe.ped_power_enabled = cmd->ped_power_enabled;
+    ctx->observe.ped_sleep_enabled = cmd->sleep_enabled;
+    ctx->observe.registration_enabled = cmd->registration_enabled;
+    ctx->observe.trigger_config = cmd->trigger_config;
+    (void)observe_request_params(ctx, cmd->observe_params);
 
     return ACTION_OK;
 }
@@ -1369,12 +1448,12 @@ ActionResult action_accept_time_sync(SystemContext* ctx, const SystemEvent* even
     }
 
     length = tlm_staging_get(event->tlm_slot, buffer, (uint16_t)sizeof(buffer));
-    observe_apply_kt(ctx, NI_FORMAT_SYNC_ORBIT_ATTITUDE, buffer, length);
+    observe_accept_kt(ctx, OBSERVE_KT_SYNC_ORBIT, buffer, length);
 
     return ACTION_OK;
 }
 
-ActionResult action_accept_orbit(SystemContext* ctx, const SystemEvent* event) {
+ActionResult action_accept_mcilwain(SystemContext* ctx, const SystemEvent* event) {
     uint8_t buffer[TLM_PAYLOAD_MAX];
     uint16_t length;
 
@@ -1383,7 +1462,7 @@ ActionResult action_accept_orbit(SystemContext* ctx, const SystemEvent* event) {
     }
 
     length = tlm_staging_get(event->tlm_slot, buffer, (uint16_t)sizeof(buffer));
-    observe_apply_kt(ctx, NI_FORMAT_MCILWAIN, buffer, length);
+    observe_accept_kt(ctx, OBSERVE_KT_MCILWAIN, buffer, length);
 
     return ACTION_OK;
 }
@@ -1397,7 +1476,7 @@ ActionResult action_accept_magfield(SystemContext* ctx, const SystemEvent* event
     }
 
     length = tlm_staging_get(event->tlm_slot, buffer, (uint16_t)sizeof(buffer));
-    observe_apply_kt(ctx, NI_FORMAT_GEOMAGNETIC, buffer, length);
+    observe_accept_kt(ctx, OBSERVE_KT_GEOMAGNETIC, buffer, length);
 
     return ACTION_OK;
 }
@@ -1405,6 +1484,7 @@ ActionResult action_accept_magfield(SystemContext* ctx, const SystemEvent* event
 ActionResult action_finish_observe_full(SystemContext *ctx) {
     NandRuntimeState *nand;
     ActionResult result;
+    ActionResult first_error = ACTION_OK;
 
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
@@ -1415,74 +1495,91 @@ ActionResult action_finish_observe_full(SystemContext *ctx) {
         return ACTION_ERR_CONTENT;
     }
 
-    result = require_ok(board_ped_set_inhibit(1U));
-    if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        return result;
-    }
+    observe_abort(ctx);
 
-    ctx->ped.inhibit_enabled = true;
-    ctx->observe.registration_enabled = false;
+    result = release_observe_ped(ctx, ctx->observe.ped_power_after_full,
+                                 ctx->observe.ped_sleep_after_full);
+    remember_first_error(&first_error, result);
 
-    result = disconnect_nand_if_needed(ctx, ctx->observe.bank);
-    if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        return result;
-    }
-    result = maybe_power_off_nand(ctx,
-                                  ctx->observe.bank,
-                                  ctx->observe.power_after_done);
-    if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        return result;
-    }
+    result = release_nand_bank(ctx, ctx->observe.bank, ctx->observe.bank_power_after_full);
+    remember_first_error(&first_error, result);
+
     nand->is_full = true;
+
     result = action_update_service_data(ctx);
     if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        return result;
+        alarm_set(ctx, ALARM_MRAM);
+        remember_first_error(&first_error, ACTION_ALARM);
     }
 
-    ctx->observe.stage = OBSERVE_STAGE_EXIT_FULL;
-    return ACTION_OK;
+    ctx->observe.stage = (first_error == ACTION_OK) ? OBSERVE_STAGE_EXIT_FULL : OBSERVE_STAGE_EXIT_ALARM;
+
+    return first_error;
 }
 
 ActionResult action_finish_observe(SystemContext* ctx, const SystemEvent* event) {
+    ObserveContext* observe;
+
+    if ((ctx == NULL) || (event == NULL)) {
+        return ACTION_ERR_CONTENT;
+    }
+
+    observe = &ctx->observe;
+
+    if ((observe->stage == OBSERVE_STAGE_FINISHING) || (observe->stage == OBSERVE_STAGE_FLUSHING)) {
+        if (event->type == EVENT_CMD_SHUTDOWN) {
+            observe->finish_target_state = STATE_SHUTDOWN;
+        }
+        return ACTION_OK;
+    }
+
+    observe->finish_requested = true;
+
+    if (event->type == EVENT_CMD_SHUTDOWN) {
+        observe->finish_target_state = STATE_SHUTDOWN;
+        observe->finish_bank_power = POWER_AFTER_DONE_OFF;
+        observe->finish_ped_power = false;
+        observe->finish_ped_sleep = false;
+    } else {
+        observe->finish_target_state = STATE_DUTY;
+        observe->finish_bank_power = event->command.duty.power_after_done;
+        observe->finish_ped_power = event->command.duty.ped_power_enabled;
+        observe->finish_ped_sleep = event->command.duty.ped_sleep_enabled;
+    }
+
+    if (observe->stage == OBSERVE_STAGE_ENTER) {
+        observe_abort(ctx);
+        return action_complete_observe(ctx);
+    }
+
+    observe_request_final(ctx);
+
+    return ACTION_OK;
+}
+
+ActionResult action_complete_observe(SystemContext* ctx) {
     ActionResult result;
+    ActionResult first_error = ACTION_OK;
 
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
     }
 
-    if ((event != NULL) && ((event->type == EVENT_CMD_DUTY) || (event->type == EVENT_CMD_SHUTDOWN))) {
-        ctx->observe.finish_requested = true;
-        ctx->observe.finish_target_state = (event->type == EVENT_CMD_SHUTDOWN) ? STATE_SHUTDOWN : STATE_DUTY;
-    }
+    result = release_observe_ped(ctx, ctx->observe.finish_ped_power, ctx->observe.finish_ped_sleep);
+    remember_first_error(&first_error, result);
 
-    observe_finish_session(ctx);
+    result = release_nand_bank(ctx, ctx->observe.bank, ctx->observe.finish_bank_power);
+    remember_first_error(&first_error, result);
 
-    result = require_ok(board_ped_set_inhibit(1U));
+    result = action_update_service_data(ctx);
     if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        return result;
-    }
-    ctx->ped.inhibit_enabled = true;
-    ctx->observe.registration_enabled = false;
-
-    result = disconnect_nand_if_needed(ctx, ctx->observe.bank);
-    if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        return result;
+        alarm_set(ctx, ALARM_MRAM);
+        remember_first_error(&first_error, ACTION_ALARM);
     }
 
-    result = maybe_power_off_nand(ctx, ctx->observe.bank, ctx->observe.power_after_done);
-    if (result != ACTION_OK) {
-        ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
-        return result;
-    }
+    ctx->observe.stage = (first_error == ACTION_OK) ? OBSERVE_STAGE_EXIT_CMD : OBSERVE_STAGE_EXIT_ALARM;
 
-    ctx->observe.stage = OBSERVE_STAGE_EXIT_CMD;
-    return ACTION_OK;
+    return first_error;
 }
 
 ActionResult action_finish_observe_alarm(SystemContext* ctx) {
@@ -1492,13 +1589,13 @@ ActionResult action_finish_observe_alarm(SystemContext* ctx) {
         return ACTION_ERR_CONTENT;
     }
 
+    observe_abort(ctx);
     ctx->observe.stage = OBSERVE_STAGE_EXIT_ALARM;
+
     result = require_ok(board_ped_set_inhibit(1U));
-    if (result != ACTION_OK) {
-        return result;
+    if (result == ACTION_OK) {
+        ctx->ped.inhibit_enabled = true;
     }
-    ctx->ped.inhibit_enabled = true;
-    ctx->observe.registration_enabled = false;
 
     return disconnect_nand_if_needed(ctx, ctx->observe.bank);
 }

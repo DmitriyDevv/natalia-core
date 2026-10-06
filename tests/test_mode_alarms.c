@@ -179,6 +179,36 @@ static void dump_output_failure_raises_usb_pr(void) {
     assert(!board_stub_data_link_is_open());
 }
 
+/* DUMP sends nothing until the output link reports ready (time for the host to
+ * open the port); the wait is not counted by the transfer timeout. */
+static void dump_waits_for_link_ready(void) {
+    SystemContext ctx;
+    uint32_t i;
+
+    begin_test(&ctx, ALARM_ALL_MASK);
+    board_stub_set_data_link_ready(false);
+    enqueue_dump(4U);
+
+    for (i = 0U; i < 20U; ++i) {
+        step(&ctx);
+    }
+    for (i = 0U; i < (DUMP_MODE_TX_TIMEOUT_S + 2U); ++i) {
+        (void)system_event_queue_push_back_type(EVENT_RTC_1HZ);
+        step(&ctx);
+    }
+
+    assert(ctx.state == STATE_DUMP);
+    assert(ctx.dump.bytes_done == 0U);
+    assert(ctx.alarm_status == 0U);
+
+    board_stub_set_data_link_ready(true);
+    run_until_settled(&ctx, STATE_DUMP);
+
+    assert(ctx.state == STATE_DUTY);
+    assert(ctx.alarm_status == 0U);
+    assert(ctx.dump.bytes_done == (4U * DUMP_MODE_PACKET_SIZE));
+}
+
 /* DUMP start opens the output interface. */
 static void dump_start_opens_link(void) {
     SystemContext ctx;
@@ -376,6 +406,7 @@ int main(void) {
     dump_uncorrectable_ecc_does_not_stop_dump();
     dump_output_failure_raises_usb_pr();
     dump_start_opens_link();
+    dump_waits_for_link_ready();
     dump_completion_closes_link();
     dump_without_receiver_enters_alarm();
     dump_without_receiver_masked_runs();

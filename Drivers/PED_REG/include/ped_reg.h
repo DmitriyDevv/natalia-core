@@ -51,9 +51,15 @@ BoardStatus ped_reg_reset_trigger(void);
 BoardStatus ped_reg_acquisition_start(void);
 BoardStatus ped_reg_acquisition_stop(void);
 BoardStatus ped_reg_take_records(PedRegRecord* records, size_t capacity, size_t* count);
+BoardStatus ped_reg_take_records_raw(void* records, size_t capacity, size_t* count);
 BoardStatus ped_reg_take_faults(uint32_t* faults);
 BoardStatus ped_reg_get_stats(PedRegStats* stats);
 
 BoardStatus ped_reg_take_trigger_pending(uint8_t* pending);
+
+#if defined(NATALIA_PED_REG_INJECT) && (NATALIA_PED_REG_INJECT != 0)
+BoardStatus ped_reg_inject_event(const uint16_t* words);
+BoardStatus ped_reg_inject_second(void);
+#endif
 
 #endif

@@ -6,8 +6,9 @@
 #include "board_pins.h"
 #include "gpio.h"
 #include "stm32l496xx.h"
+#include "timebase.h"
 
-#define SPI_TIMEOUT (1000000UL)
+#define SPI_TIMEOUT_US 50000UL
 
 #ifndef NATALIA_SPI_MRAM_BR
 #define NATALIA_SPI_MRAM_BR (0UL)
@@ -134,28 +135,24 @@ static BoardStatus spi_get_state(SpiBusId bus, SpiBusState** state) {
 }
 
 static BoardStatus spi_wait_flag_set(SPI_TypeDef* spi, uint32_t flag) {
-    uint32_t timeout = SPI_TIMEOUT;
+    uint32_t start = timebase_cycles();
 
     while ((spi->SR & flag) == 0U) {
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= SPI_TIMEOUT_US) {
             return BOARD_ERR_TIMEOUT;
         }
-
-        --timeout;
     }
 
     return BOARD_OK;
 }
 
 static BoardStatus spi_wait_flag_clear(SPI_TypeDef* spi, uint32_t flag) {
-    uint32_t timeout = SPI_TIMEOUT;
+    uint32_t start = timebase_cycles();
 
     while ((spi->SR & flag) != 0U) {
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= SPI_TIMEOUT_US) {
             return BOARD_ERR_TIMEOUT;
         }
-
-        --timeout;
     }
 
     return BOARD_OK;
@@ -315,7 +312,7 @@ static BoardStatus spi_transfer_dma(SpiBusId bus,
     const SpiDmaConfig* cfg = &spi_dma_configs[bus];
     SPI_TypeDef* spi = state->instance;
     uint32_t done_flags;
-    uint32_t timeout;
+    uint32_t start;
     BoardStatus status = BOARD_OK;
 
     cfg->rx_channel->CCR &= ~DMA_CCR_EN;
@@ -357,13 +354,12 @@ static BoardStatus spi_transfer_dma(SpiBusId bus,
 
     done_flags = SPI_DMA_TCIF(cfg->rx_channel_index) |
                  SPI_DMA_TEIF(cfg->rx_channel_index);
-    timeout = SPI_TIMEOUT;
+    start = timebase_cycles();
     while ((cfg->dma->ISR & done_flags) == 0U) {
-        if (timeout == 0U) {
+        if (timebase_us_since(start) >= SPI_TIMEOUT_US) {
             status = BOARD_ERR_TIMEOUT;
             break;
         }
-        --timeout;
     }
 
     if ((status == BOARD_OK) &&

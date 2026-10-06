@@ -138,6 +138,49 @@ static void wraps_around_many_times(void) {
     assert(ped_reg_ring_count(&ring) == 0U);
 }
 
+/* Batch pop returns records in order, splits a batch at the end of the storage
+ * and never returns more than asked or more than stored. */
+static void pop_many_wraps_and_keeps_order(void) {
+    static PedRegRecord batch[100];
+    PedRegRecord record;
+    uint32_t written = 0U;
+    uint32_t read = 0U;
+    uint32_t round;
+    uint32_t count;
+    uint32_t i;
+
+    ped_reg_ring_reset(&ring);
+    assert(ped_reg_ring_pop_many(&ring, batch, 100U) == 0U);
+    assert(ped_reg_ring_pop_many(NULL, batch, 100U) == 0U);
+    assert(ped_reg_ring_pop_many(&ring, NULL, 100U) == 0U);
+
+    for (round = 0U; round < 200U; ++round) {
+        while (ped_reg_ring_has_event_room(&ring) && ((written - read) < 1500U)) {
+            record = make_record(PED_REG_RECORD_EVENT, written);
+            assert(ped_reg_ring_push_event(&ring, &record));
+            ++written;
+        }
+
+        count = ped_reg_ring_pop_many(&ring, batch, 37U + (round % 64U));
+        assert(count == (37U + (round % 64U)));
+        for (i = 0U; i < count; ++i) {
+            check_record(&batch[i], PED_REG_RECORD_EVENT, read);
+            ++read;
+        }
+    }
+
+    while ((count = ped_reg_ring_pop_many(&ring, batch, 100U)) != 0U) {
+        for (i = 0U; i < count; ++i) {
+            check_record(&batch[i], PED_REG_RECORD_EVENT, read);
+            ++read;
+        }
+    }
+
+    assert(read == written);
+    assert(written > (3U * PED_REG_RING_CAPACITY));
+    assert(ped_reg_ring_count(&ring) == 0U);
+}
+
 static void rejects_invalid_arguments(void) {
     PedRegRecord record = make_record(PED_REG_RECORD_EVENT, 0U);
 
@@ -226,6 +269,7 @@ int main(void) {
     keeps_order_of_events_and_seconds();
     reserve_is_kept_for_seconds();
     wraps_around_many_times();
+    pop_many_wraps_and_keeps_order();
     rejects_invalid_arguments();
     stub_returns_records_in_order();
     stub_faults_writes_and_acquisition();

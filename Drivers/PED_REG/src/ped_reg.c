@@ -673,18 +673,12 @@ BoardStatus ped_reg_acquisition_stop(void) {
     return BOARD_OK;
 }
 
-BoardStatus ped_reg_take_records(PedRegRecord* records, size_t capacity, size_t* count) {
-    size_t taken = 0U;
-
+BoardStatus ped_reg_take_records_raw(void* records, size_t capacity, size_t* count) {
     if ((count == 0) || ((records == 0) && (capacity > 0U))) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    while ((taken < capacity) && ped_reg_ring_pop(&ped_reg_ring, &records[taken])) {
-        ++taken;
-    }
-
-    *count = taken;
+    *count = (capacity == 0U) ? 0U : ped_reg_ring_pop_many(&ped_reg_ring, records, (uint32_t)capacity);
 
     if ((ped_reg_event_held != 0U) && ped_reg_ring_has_event_room(&ped_reg_ring)) {
         ped_reg_mask_irqs();
@@ -699,6 +693,10 @@ BoardStatus ped_reg_take_records(PedRegRecord* records, size_t capacity, size_t*
     }
 
     return BOARD_OK;
+}
+
+BoardStatus ped_reg_take_records(PedRegRecord* records, size_t capacity, size_t* count) {
+    return ped_reg_take_records_raw(records, capacity, count);
 }
 
 BoardStatus ped_reg_take_faults(uint32_t* faults) {
@@ -778,3 +776,50 @@ BoardStatus ped_reg_take_trigger_pending(uint8_t* pending) {
 
     return BOARD_OK;
 }
+
+#if defined(NATALIA_PED_REG_INJECT) && (NATALIA_PED_REG_INJECT != 0)
+BoardStatus ped_reg_inject_event(const uint16_t* words) {
+    PedRegRecord record;
+
+    if (words == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (ped_reg_seconds_enabled == 0U) {
+        return BOARD_ERR_NOT_READY;
+    }
+
+    if (!ped_reg_ring_has_event_room(&ped_reg_ring)) {
+        ++ped_reg_events_held;
+        return BOARD_ERR_BUSY;
+    }
+
+    record.kind = (uint8_t)PED_REG_RECORD_EVENT;
+    record.flags = 0U;
+    record.data[0] = words[0];
+    record.data[1] = words[1];
+    record.data[2] = words[2];
+    record.data[3] = words[3];
+    record.data[4] = 0U;
+    record.rtc_seconds = 0U;
+
+    if (!ped_reg_ring_push_event(&ped_reg_ring, &record)) {
+        ++ped_reg_events_held;
+        return BOARD_ERR_BUSY;
+    }
+
+    ++ped_reg_events_read;
+
+    return BOARD_OK;
+}
+
+BoardStatus ped_reg_inject_second(void) {
+    if (ped_reg_seconds_enabled == 0U) {
+        return BOARD_ERR_NOT_READY;
+    }
+
+    ped_reg_on_second();
+
+    return BOARD_OK;
+}
+#endif

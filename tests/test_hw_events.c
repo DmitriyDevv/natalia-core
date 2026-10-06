@@ -8,10 +8,9 @@
 #include "event_queue.h"
 #include "state.h"
 
-/* §2: the flight loop must drain the RTC 1 Hz and PED trigger counters through
- * Board_API and enqueue one event per accumulated count. RTC ticks feed every
- * mode (heartbeat / future monitoring); PED triggers are collected only in
- * OBSERVE, their only consumer. */
+/* §2: the flight loop drains the RTC 1 Hz counter through Board_API and enqueues
+ * one event per accumulated count, in every mode. PED triggers never become
+ * queue events: OBSERVE takes PED records from the ring in batches. */
 
 static void rtc_collected_in_duty_ped_skipped(void) {
     SystemContext ctx;
@@ -23,7 +22,7 @@ static void rtc_collected_in_duty_ped_skipped(void) {
     system_event_queue_init();
 
     board_stub_set_rtc_1hz_events(3U);
-    board_stub_set_ped_trigger_events(5U); /* must be ignored outside OBSERVE */
+    board_stub_set_ped_trigger_events(5U);
 
     algorithm_collect_hw_events(&ctx);
 
@@ -33,11 +32,9 @@ static void rtc_collected_in_duty_ped_skipped(void) {
     }
 }
 
-static void rtc_and_ped_collected_in_observe(void) {
+static void ped_triggers_not_queued_in_observe(void) {
     SystemContext ctx;
     SystemEvent event;
-    uint32_t rtc_seen = 0U;
-    uint32_t ped_seen = 0U;
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_OBSERVE;
@@ -49,19 +46,9 @@ static void rtc_and_ped_collected_in_observe(void) {
 
     algorithm_collect_hw_events(&ctx);
 
-    assert(system_event_queue_get_count() == 5U);
-    while (system_event_queue_pop(&event)) {
-        if (event.type == EVENT_RTC_1HZ) {
-            ++rtc_seen;
-        } else if (event.type == EVENT_PED_TRIGGER) {
-            ++ped_seen;
-        } else {
-            assert(0);
-        }
-    }
-
-    assert(rtc_seen == 1U);
-    assert(ped_seen == 4U);
+    assert(system_event_queue_get_count() == 1U);
+    assert(system_event_queue_pop(&event));
+    assert(event.type == EVENT_RTC_1HZ);
 }
 
 static void take_drains_counter(void) {
@@ -76,7 +63,7 @@ static void take_drains_counter(void) {
     board_stub_set_ped_trigger_events(2U);
 
     algorithm_collect_hw_events(&ctx);
-    assert(system_event_queue_get_count() == 4U);
+    assert(system_event_queue_get_count() == 2U);
 
     /* Second collection with nothing new pending enqueues nothing. */
     system_event_queue_init();
@@ -131,7 +118,7 @@ static void no_nand_power_fault_no_alarm(void) {
 
 int main(void) {
     rtc_collected_in_duty_ped_skipped();
-    rtc_and_ped_collected_in_observe();
+    ped_triggers_not_queued_in_observe();
     take_drains_counter();
     nand_power_fault_raises_alarm_and_enters_alarm_mode();
     no_nand_power_fault_no_alarm();

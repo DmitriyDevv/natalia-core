@@ -15,7 +15,6 @@ typedef enum {
 static NandProgramDmaState nand_program_dma_state = NAND_PROGRAM_DMA_IDLE;
 static uint8_t nand_program_dma_status_value = 0U;
 static uint32_t nand_program_dma_row_address = 0U;
-static uint32_t nand_program_dma_timeout = 0U;
 static uint8_t nand_last_ecc_status = 0U;
 static uint8_t nand_program_dma_busy_seen = 0U;
 static uint8_t nand_program_dma_unconfirmed = 0U;
@@ -497,7 +496,6 @@ BoardStatus nand_mt29f_program_page_dma_start_at(uint32_t block,
 
     nand_program_dma_row_address = make_row_address(block, page);
     nand_program_dma_status_value = 0U;
-    nand_program_dma_timeout = NAND_TIMEOUT_LOOPS;
     nand_program_dma_unconfirmed = 0U;
 
     nand_mt29f_clear_fault();
@@ -560,7 +558,6 @@ BoardStatus nand_mt29f_program_page_dma_poll(uint8_t* is_done) {
         }
 
         nand_program_dma_execute_cycles = timebase_cycles();
-        nand_program_dma_timeout = NAND_TIMEOUT_LOOPS;
         nand_program_dma_busy_seen = 0U;
         nand_program_dma_state = NAND_PROGRAM_DMA_WAIT_READY;
 
@@ -568,7 +565,7 @@ BoardStatus nand_mt29f_program_page_dma_poll(uint8_t* is_done) {
     }
 
     if (nand_program_dma_state == NAND_PROGRAM_DMA_WAIT_READY) {
-        if (nand_program_dma_timeout == 0U) {
+        if (timebase_us_since(nand_program_dma_execute_cycles) >= NAND_READY_TIMEOUT_US) {
             nand_program_dma_state = NAND_PROGRAM_DMA_IDLE;
             *is_done = 1U;
             return nand_mt29f_record_fault(NAND_MT29F_FAULT_TIMEOUT,
@@ -585,8 +582,6 @@ BoardStatus nand_mt29f_program_page_dma_poll(uint8_t* is_done) {
         }
 
         elapsed_us = timebase_us_since(nand_program_dma_execute_cycles);
-
-        --nand_program_dma_timeout;
 
         if (nand_ready == 0U) {
             nand_program_dma_busy_seen = 1U;

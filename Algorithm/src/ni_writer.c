@@ -134,6 +134,7 @@ static void ni_writer_write_step(NiWriter* writer, NiStream* stream) {
 
         status = ni_writer_save_progress(writer);
         if (status != BOARD_OK) {
+            writer->mram_failed = true;
             ni_writer_fail(writer, status);
             return;
         }
@@ -154,6 +155,11 @@ static void ni_writer_write_step(NiWriter* writer, NiStream* stream) {
             writer->state = NI_WRITER_FLUSHING;
             return;
         }
+
+        if (board_elapsed_us(writer->idle_poll_timestamp) < NI_WRITER_IDLE_POLL_US) {
+            return;
+        }
+        writer->idle_poll_timestamp = board_timestamp();
 
         status = board_nand_write_poll(writer->bank_id, &is_done);
         if (status != BOARD_OK) {
@@ -204,6 +210,7 @@ static void ni_writer_flush_step(NiWriter* writer) {
 
     status = ni_writer_save_progress(writer);
     if (status != BOARD_OK) {
+        writer->mram_failed = true;
         ni_writer_fail(writer, status);
         return;
     }
@@ -226,6 +233,7 @@ BoardStatus ni_writer_begin(NiWriter* writer, uint8_t bank_id) {
     (void)memset(&service_data, 0, sizeof(service_data));
     status = mram_store_load_service_data(&service_data);
     if (status != BOARD_OK) {
+        writer->mram_failed = true;
         writer->last_error = status;
         return status;
     }
@@ -301,4 +309,8 @@ uint16_t ni_writer_last_crc(const NiWriter* writer) {
 
 BoardStatus ni_writer_last_error(const NiWriter* writer) {
     return (writer == NULL) ? BOARD_ERR_INVALID_ARG : writer->last_error;
+}
+
+bool ni_writer_mram_failed(const NiWriter* writer) {
+    return (writer != NULL) && writer->mram_failed;
 }
