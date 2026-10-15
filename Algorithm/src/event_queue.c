@@ -21,7 +21,10 @@ typedef struct {
     volatile uint16_t tail;
     volatile uint16_t count;
     volatile uint32_t overflow_count;
+    volatile uint32_t pending_types;
 } SystemEventQueue;
+
+_Static_assert((uint32_t)EVENT_MASKED_ALARM_CLEAR < 32U, "EventType must fit the pending mask");
 
 static SystemEventQueue system_event_queue;
 
@@ -86,8 +89,55 @@ void system_event_queue_clear(void) {
     system_event_queue.head = 0U;
     system_event_queue.tail = 0U;
     system_event_queue.count = 0U;
+    system_event_queue.pending_types = 0U;
 
     event_queue_irq_restore(primask);
+}
+
+static void event_queue_append_locked(EventType type) {
+    SystemEvent* slot = &system_event_queue.data[system_event_queue.tail];
+
+    (void)memset(slot, 0, sizeof(*slot));
+    slot->type = type;
+    system_event_queue.tail = event_queue_next_index(system_event_queue.tail);
+    ++system_event_queue.count;
+}
+
+static void event_queue_release_pending_locked(void) {
+    uint32_t type;
+
+    for (type = 0U; type < 32U; ++type) {
+        if (system_event_queue.count >= (uint16_t)SYSTEM_EVENT_QUEUE_CAPACITY) {
+            return;
+        }
+        if ((system_event_queue.pending_types & (1UL << type)) != 0U) {
+            system_event_queue.pending_types &= ~(uint32_t)(1UL << type);
+            event_queue_append_locked((EventType)type);
+        }
+    }
+}
+
+bool system_event_queue_post_type(EventType type) {
+    uint32_t primask;
+    bool result = true;
+
+    if ((uint32_t)type >= 32U) {
+        return false;
+    }
+
+    primask = event_queue_irq_save();
+
+    if (system_event_queue.count < (uint16_t)SYSTEM_EVENT_QUEUE_CAPACITY) {
+        event_queue_append_locked(type);
+    } else {
+        ++system_event_queue.overflow_count;
+        system_event_queue.pending_types |= (1UL << (uint32_t)type);
+        result = false;
+    }
+
+    event_queue_irq_restore(primask);
+
+    return result;
 }
 
 bool system_event_queue_push_back(const SystemEvent* event) {
@@ -173,6 +223,7 @@ bool system_event_queue_pop(SystemEvent* event) {
         system_event_queue.head = event_queue_next_index(system_event_queue.head);
         --system_event_queue.count;
         result = true;
+        event_queue_release_pending_locked();
     }
 
     event_queue_irq_restore(primask);
@@ -191,6 +242,19 @@ uint32_t system_event_queue_get_count(void) {
     event_queue_irq_restore(primask);
 
     return count;
+}
+
+uint32_t system_event_queue_get_pending_types(void) {
+    uint32_t primask;
+    uint32_t pending_types;
+
+    primask = event_queue_irq_save();
+
+    pending_types = system_event_queue.pending_types;
+
+    event_queue_irq_restore(primask);
+
+    return pending_types;
 }
 
 uint32_t system_event_queue_get_overflow_count(void) {

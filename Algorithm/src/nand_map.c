@@ -5,6 +5,11 @@
 #define NAND_MAP_SCAN_POLL_LIMIT 4096U
 
 static BoardNandBlockMap nand_map_buffer;
+static bool nand_map_mram_error;
+
+bool nand_map_mram_failed(void) {
+    return nand_map_mram_error;
+}
 
 static BoardStatus nand_map_scan(uint8_t bank_id) {
     uint32_t polls;
@@ -29,16 +34,22 @@ static BoardStatus nand_map_scan(uint8_t bank_id) {
 BoardStatus nand_map_save(uint8_t bank_id) {
     BoardStatus status;
 
+    nand_map_mram_error = false;
+
     status = board_nand_get_block_map(bank_id, &nand_map_buffer);
     if (status != BOARD_OK) {
         return status;
     }
 
-    return mram_store_save_block_map(bank_id, &nand_map_buffer);
+    status = mram_store_save_block_map(bank_id, &nand_map_buffer);
+    nand_map_mram_error = (status != BOARD_OK);
+    return status;
 }
 
 BoardStatus nand_map_rebuild(uint8_t bank_id) {
     BoardStatus status;
+
+    nand_map_mram_error = false;
 
     status = nand_map_scan(bank_id);
     if (status != BOARD_OK) {
@@ -52,8 +63,10 @@ BoardStatus nand_map_load(uint8_t bank_id) {
     uint8_t is_valid = 0U;
     BoardStatus status;
 
+    nand_map_mram_error = false;
     status = mram_store_load_block_map(bank_id, &nand_map_buffer, &is_valid);
     if (status != BOARD_OK) {
+        nand_map_mram_error = true;
         return status;
     }
 

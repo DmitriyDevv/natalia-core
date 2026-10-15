@@ -66,7 +66,7 @@ static void wait_usb_ready(void) {
     }
 }
 
-static void wait_write_idle(void) {
+__attribute__((unused)) static void wait_write_idle(void) {
     uint8_t is_idle = 0U;
 
     while (is_idle == 0U) {
@@ -74,7 +74,7 @@ static void wait_write_idle(void) {
     }
 }
 
-static void wait_write_flush(void) {
+__attribute__((unused)) static void wait_write_flush(void) {
     uint8_t is_done = 0U;
 
     while (is_done == 0U) {
@@ -455,7 +455,7 @@ static void nand_ready(void) {
     }
 }
 
-static void run_usb_only(void) {
+__attribute__((unused)) static void run_usb_only(void) {
     uint32_t packet_index;
 
     wait_usb_ready();
@@ -551,7 +551,7 @@ static void run_nand_write_prepare(void) {
     send_summary("NAND_WRITE_PREPARE", TEST_PACKET_COUNT, elapsed_ms, checksum);
 }
 
-static void run_nand_read_only(void) {
+__attribute__((unused)) static void run_nand_read_only(void) {
     uint32_t packet_index;
     uint32_t start_ms;
     uint32_t elapsed_ms;
@@ -580,7 +580,7 @@ static void run_nand_read_only(void) {
     send_summary("NAND_READ_ONLY", TEST_PACKET_COUNT, elapsed_ms, checksum);
 }
 
-static void run_nand_usb_dump(void) {
+__attribute__((unused)) static void run_nand_usb_dump(void) {
     uint32_t packet_index;
     uint8_t has_packet = 0U;
 

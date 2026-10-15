@@ -7,14 +7,16 @@
 #include "stm32l496xx.h"
 #include "timebase.h"
 
-#define ADC_CHANNEL_COUNT (2UL)
+#define ADC_CHANNEL_COUNT (3UL)
 #define ADC_DMA_BUFFER_LENGTH (ADC_CHANNEL_COUNT)
 
 #define ADC_TERM_A_FRAME_OFFSET (0UL)
 #define ADC_VREFINT_FRAME_OFFSET (1UL)
+#define ADC_MCU_TEMP_FRAME_OFFSET (2UL)
 
 #define ADC_TERM_A_CHANNEL (5UL)
 #define ADC_VREFINT_CHANNEL (0UL)
+#define ADC_MCU_TEMP_CHANNEL (17UL)
 
 #define ADC_TIMEOUT_US 10000UL
 #define ADC_SAMPLE_TIME_640_5_CYCLES (7UL)
@@ -121,7 +123,7 @@ static BoardStatus adc_enable_adc_clock_and_reference(void) {
 
     ADC123_COMMON->CCR &= ~ADC_CCR_CKMODE;
     ADC123_COMMON->CCR |= ADC_CCR_CKMODE_0 | ADC_CCR_CKMODE_1;
-    ADC123_COMMON->CCR |= ADC_CCR_VREFEN;
+    ADC123_COMMON->CCR |= ADC_CCR_VREFEN | ADC_CCR_TSEN;
 
     ADC1->CR &= ~ADC_CR_DEEPPWD;
     ADC1->CR |= ADC_CR_ADVREGEN;
@@ -193,7 +195,7 @@ static BoardStatus adc_power_down(void) {
         return status;
     }
 
-    ADC123_COMMON->CCR &= ~ADC_CCR_VREFEN;
+    ADC123_COMMON->CCR &= ~(ADC_CCR_VREFEN | ADC_CCR_TSEN);
 
     ADC1->CR &= ~ADC_CR_ADVREGEN;
     ADC1->CR |= ADC_CR_DEEPPWD;
@@ -230,8 +232,16 @@ static BoardStatus adc_set_sample_time(uint32_t channel) {
     uint32_t shift;
     uint32_t mask;
 
-    if (channel > 9UL) {
+    if (channel > 18UL) {
         return BOARD_ERR_INVALID_ARG;
+    }
+
+    if (channel > 9UL) {
+        shift = (channel - 10UL) * 3UL;
+        mask = 7UL << shift;
+        ADC1->SMPR2 &= ~mask;
+        ADC1->SMPR2 |= ADC_SAMPLE_TIME_640_5_CYCLES << shift;
+        return BOARD_OK;
     }
 
     shift = channel * 3UL;
@@ -263,10 +273,16 @@ static BoardStatus adc_configure_regular_sequence(void) {
         return status;
     }
 
+    status = adc_set_sample_time(ADC_MCU_TEMP_CHANNEL);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
     ADC1->SQR1 =
-        (1UL << ADC_SQR1_L_Pos) |
+        ((ADC_CHANNEL_COUNT - 1UL) << ADC_SQR1_L_Pos) |
         (ADC_TERM_A_CHANNEL << ADC_SQR1_SQ1_Pos) |
-        (ADC_VREFINT_CHANNEL << ADC_SQR1_SQ2_Pos);
+        (ADC_VREFINT_CHANNEL << ADC_SQR1_SQ2_Pos) |
+        (ADC_MCU_TEMP_CHANNEL << ADC_SQR1_SQ3_Pos);
 
     return BOARD_OK;
 }
@@ -383,6 +399,7 @@ BoardStatus adc_init(void) {
     adc_sequence = 0U;
     adc_dma_buffer[ADC_TERM_A_FRAME_OFFSET] = 0U;
     adc_dma_buffer[ADC_VREFINT_FRAME_OFFSET] = 0U;
+    adc_dma_buffer[ADC_MCU_TEMP_FRAME_OFFSET] = 0U;
 
     status = adc_configure_term_a_pin();
     if (status != BOARD_OK) {
@@ -412,6 +429,7 @@ BoardStatus adc_start_sample(void) {
     adc_state = (uint8_t)ADC_STATE_IDLE;
     adc_dma_buffer[ADC_TERM_A_FRAME_OFFSET] = 0U;
     adc_dma_buffer[ADC_VREFINT_FRAME_OFFSET] = 0U;
+    adc_dma_buffer[ADC_MCU_TEMP_FRAME_OFFSET] = 0U;
 
     DMA1_Channel1->CCR &= ~DMA_CCR_EN;
     DMA1->IFCR = DMA_IFCR_CGIF1;
@@ -530,7 +548,7 @@ BoardStatus adc_read_input(AdcInputId input, AdcSample* sample) {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    if (input != ADC_INPUT_TERM_A) {
+    if ((input != ADC_INPUT_TERM_A) && (input != ADC_INPUT_MCU_TEMP)) {
         return BOARD_ERR_UNSUPPORTED;
     }
 
@@ -557,7 +575,8 @@ BoardStatus adc_read_input(AdcInputId input, AdcSample* sample) {
         return BOARD_ERR_NOT_READY;
     }
 
-    raw = adc_dma_buffer[ADC_TERM_A_FRAME_OFFSET];
+    raw = (input == ADC_INPUT_MCU_TEMP) ? adc_dma_buffer[ADC_MCU_TEMP_FRAME_OFFSET]
+                                        : adc_dma_buffer[ADC_TERM_A_FRAME_OFFSET];
     vrefint_raw = adc_dma_buffer[ADC_VREFINT_FRAME_OFFSET];
     sequence = adc_sequence;
 

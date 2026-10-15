@@ -36,6 +36,7 @@ static uint32_t board_stub_nand_scans[BOARD_STUB_NAND_BANK_COUNT];
 static uint32_t board_stub_nand_write_fail_at[BOARD_STUB_NAND_BANK_COUNT];
 static BoardStatus board_stub_nand_erase_status[BOARD_STUB_NAND_BANK_COUNT];
 static BoardStatus board_stub_nand_read_status[BOARD_STUB_NAND_BANK_COUNT];
+static uint32_t board_stub_nand_corrupt_at[BOARD_STUB_NAND_BANK_COUNT];
 static BoardStatus board_stub_data_write_status;
 static BoardStatus board_stub_data_flush_status;
 static uint8_t board_stub_data_write_stalled;
@@ -63,6 +64,8 @@ static uint32_t board_stub_ped_trigger_pending;
 static int32_t board_stub_digital_temp_milli[2] = {25000, 25000};
 static uint8_t board_stub_digital_temp_ready[2] = {1U, 1U};
 static uint8_t board_stub_digital_temp_valid[2] = {1U, 1U};
+static int32_t board_stub_analog_temp_milli[2] = {25000, 25000};
+static uint8_t board_stub_analog_temp_valid[2] = {1U, 1U};
 static uint32_t board_stub_power_mv[2] = {3300U, 3300U};
 static int32_t board_stub_power_ua[2] = {0, 0};
 static uint8_t board_stub_power_ready[2] = {1U, 1U};
@@ -207,6 +210,12 @@ void board_stub_set_nand_read_status(uint8_t bank_id, BoardStatus status) {
     }
 }
 
+void board_stub_set_nand_corrupt_packet(uint8_t bank_id, uint32_t packet_index) {
+    if ((bank_id == 1U) || (bank_id == 2U)) {
+        board_stub_nand_corrupt_at[bank_id - 1U] = packet_index + 1U;
+    }
+}
+
 void board_stub_set_data_write_status(BoardStatus status) {
     board_stub_data_write_status = status;
 }
@@ -296,6 +305,10 @@ void board_stub_reset_all(void) {
     board_stub_digital_temp_ready[1] = 1U;
     board_stub_digital_temp_valid[0] = 1U;
     board_stub_digital_temp_valid[1] = 1U;
+    board_stub_analog_temp_milli[0] = 25000;
+    board_stub_analog_temp_milli[1] = 25000;
+    board_stub_analog_temp_valid[0] = 1U;
+    board_stub_analog_temp_valid[1] = 1U;
     board_stub_power_mv[0] = 3300U;
     board_stub_power_mv[1] = 3300U;
     board_stub_power_ua[0] = 0;
@@ -321,6 +334,8 @@ void board_stub_reset_all(void) {
     board_stub_nand_erase_status[1] = BOARD_OK;
     board_stub_nand_read_status[0] = BOARD_OK;
     board_stub_nand_read_status[1] = BOARD_OK;
+    board_stub_nand_corrupt_at[0] = 0U;
+    board_stub_nand_corrupt_at[1] = 0U;
     board_stub_data_write_status = BOARD_OK;
     board_stub_data_flush_status = BOARD_OK;
     board_stub_data_write_stalled = 0U;
@@ -525,6 +540,7 @@ BoardStatus board_mram_write(uint8_t copy_id, uint32_t offset, const void *buffe
     if (size > 0U) {
         (void)memcpy(&board_stub_mram[copy_index][(size_t)offset], buffer, size);
     }
+    board_stub_mram_crc_valid[copy_index] = 1U;
 
     return BOARD_OK;
 }
@@ -569,6 +585,7 @@ BoardStatus board_mram_restore_copy(uint8_t source_copy_id, uint8_t target_copy_
     (void)memcpy(board_stub_mram[target_index],
                  board_stub_mram[source_index],
                  BOARD_STUB_MRAM_COPY_SIZE);
+    board_stub_mram_crc_valid[target_index] = board_stub_mram_crc_valid[source_index];
 
     return BOARD_OK;
 }
@@ -974,6 +991,10 @@ BoardStatus board_nand_read_packet(uint8_t bank_id, uint32_t packet_index, void 
     (void)memcpy(packet,
                  &board_stub_nand[bank_index][offset],
                  BOARD_STUB_NAND_PACKET_SIZE);
+
+    if ((packet_index + 1U) == board_stub_nand_corrupt_at[bank_index]) {
+        ((uint8_t *)packet)[0] ^= 0x01U;
+    }
 
     return board_stub_nand_read_status[bank_index];
 }
@@ -1422,6 +1443,9 @@ BoardStatus board_rtc_set_time(const InstrumentTime *time) {
         return BOARD_ERR_INVALID_ARG;
     }
 
+    board_stub_rtc_seconds = time->seconds;
+    board_stub_rtc_milliseconds = time->milliseconds;
+
     return BOARD_OK;
 }
 
@@ -1570,6 +1594,26 @@ BoardStatus board_temp_start(void) {
 }
 
 BoardStatus board_temp_stop(void) {
+    return BOARD_OK;
+}
+
+void board_stub_set_analog_temp(bool mcu, int32_t milli_c, bool valid) {
+    board_stub_analog_temp_milli[mcu ? 0U : 1U] = milli_c;
+    board_stub_analog_temp_valid[mcu ? 0U : 1U] = valid ? 1U : 0U;
+}
+
+BoardStatus board_read_analog_temps(BoardAnalogTemps *temps) {
+    if (temps == NULL) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    memset(temps, 0, sizeof(*temps));
+    temps->mcu_milli_c = board_stub_analog_temp_milli[0];
+    temps->mcu_valid = board_stub_analog_temp_valid[0];
+    temps->bd_milli_c = board_stub_analog_temp_milli[1];
+    temps->bd_valid = board_stub_analog_temp_valid[1];
+    temps->vdda_mv = 3300U;
+
     return BOARD_OK;
 }
 

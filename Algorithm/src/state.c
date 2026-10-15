@@ -72,10 +72,31 @@ static SystemState finish_command_transition(SystemContext* ctx,
     }
 
     (void)action_send_ack_status(event, ack_status_from_result(result));
-    if (result == ACTION_ALARM) {
+    if ((result == ACTION_ALARM) && is_alarm_active(ctx)) {
         enter_alarm(ctx);
     }
 
+    return ctx->state;
+}
+
+static SystemState finish_command_exit(SystemContext* ctx,
+                                       const SystemEvent* event,
+                                       ActionResult result,
+                                       SystemState target_state) {
+    if (result != ACTION_OK) {
+        return finish_command_transition(ctx, event, result, target_state);
+    }
+
+    (void)action_send_ack(event);
+    if (is_alarm_active(ctx)) {
+        enter_alarm(ctx);
+        return ctx->state;
+    }
+    if (target_state == STATE_SHUTDOWN) {
+        (void)action_start_shutdown(ctx);
+    }
+    transition_to(ctx, target_state);
+    (void)action_send_status(ctx);
     return ctx->state;
 }
 
@@ -86,7 +107,7 @@ static SystemState finish_command_result(SystemContext* ctx,
         (void)action_send_ack(event);
     } else {
         (void)action_send_ack_status(event, ack_status_from_result(result));
-        if (result == ACTION_ALARM) {
+        if ((result == ACTION_ALARM) && is_alarm_active(ctx)) {
             enter_alarm(ctx);
         }
     }
@@ -107,18 +128,21 @@ static SystemState handle_init_event(SystemContext* ctx, const SystemEvent* even
 
         result = action_check_mram(ctx);
         if (result != ACTION_OK) {
+            action_set_alarm(ctx, ALARM_MRAM);
             enter_alarm(ctx);
             return ctx->state;
         }
 
         result = action_restore_mram_copy(ctx);
         if (result != ACTION_OK) {
+            action_set_alarm(ctx, ALARM_MRAM);
             enter_alarm(ctx);
             return ctx->state;
         }
 
         result = action_load_mram(ctx);
         if (result != ACTION_OK) {
+            action_set_alarm(ctx, ALARM_MRAM);
             enter_alarm(ctx);
             return ctx->state;
         }
@@ -215,7 +239,7 @@ static SystemState handle_duty_event(SystemContext* ctx, const SystemEvent* even
             return ctx->state;
         }
         (void)action_send_ack_status(event, ack_status_from_result(result));
-        if (result == ACTION_ALARM) {
+        if ((result == ACTION_ALARM) && is_alarm_active(ctx)) {
             enter_alarm(ctx);
         }
         return ctx->state;
@@ -273,9 +297,7 @@ static SystemState handle_erase_event(SystemContext* ctx, const SystemEvent* eve
         } else {
             (void)action_update_nand_state(ctx);
             (void)action_clear_nand_full_flag(ctx);
-            if (action_update_erase_service_data(ctx) != ACTION_OK) {
-                action_set_alarm(ctx, ALARM_MRAM);
-            }
+            (void)action_update_erase_service_data(ctx);
         }
         (void)action_finish_erase(ctx, event);
         return finish_mode(ctx);
@@ -347,8 +369,8 @@ static SystemState handle_test_event(SystemContext* ctx, const SystemEvent* even
             action_set_alarm(ctx, ALARM_NAND_PR);
         }
         (void)action_update_test_results(ctx);
-        if (ctx->test.result_valid && (action_update_test_service_data(ctx) != ACTION_OK)) {
-            action_set_alarm(ctx, ALARM_MRAM);
+        if (ctx->test.result_valid) {
+            (void)action_update_test_service_data(ctx);
         }
         (void)action_finish_test(ctx, event);
         return finish_mode(ctx);
@@ -459,11 +481,8 @@ static SystemState handle_observe_event(SystemContext* ctx, const SystemEvent* e
     // 409
     case EVENT_NAND_FULL:
         result = action_finish_observe_full(ctx);
-        if (result == ACTION_OK) {
-            transition_to(ctx, STATE_DUTY);
-            (void)action_send_status(ctx);
-        } else if (result == ACTION_ALARM) {
-            enter_alarm(ctx);
+        if ((result == ACTION_OK) || (result == ACTION_ALARM)) {
+            return finish_mode(ctx);
         }
         return ctx->state;
 
@@ -472,6 +491,10 @@ static SystemState handle_observe_event(SystemContext* ctx, const SystemEvent* e
     // 411
     case EVENT_CMD_SHUTDOWN:
         result = action_finish_observe(ctx, event);
+        if ((result == ACTION_ALARM) && !is_alarm_active(ctx)) {
+            (void)action_send_ack_status(event, ack_status_from_result(result));
+            return finish_observe_exit(ctx);
+        }
         if (result != ACTION_OK) {
             return finish_command_result(ctx, event, result);
         }
@@ -529,9 +552,7 @@ static SystemState handle_dump_event(SystemContext* ctx, const SystemEvent* even
         } else {
             (void)action_fix_dump_results(ctx);
         }
-        if (action_update_dump_service_data(ctx) != ACTION_OK) {
-            action_set_alarm(ctx, ALARM_MRAM);
-        }
+        (void)action_update_dump_service_data(ctx);
         (void)action_finish_dump(ctx, event);
         return finish_mode(ctx);
 
@@ -557,20 +578,17 @@ static SystemState handle_dump_event(SystemContext* ctx, const SystemEvent* even
     case EVENT_CMD_DUTY:
         result = action_finish_dump(ctx, event);
         if (result == ACTION_OK) {
-            result = action_update_dump_service_data(ctx);
+            (void)action_update_dump_service_data(ctx);
         }
-        return finish_command_transition(ctx, event, result, STATE_DUTY);
+        return finish_command_exit(ctx, event, result, STATE_DUTY);
 
     // 503
     case EVENT_CMD_SHUTDOWN:
         result = action_finish_dump(ctx, event);
         if (result == ACTION_OK) {
-            result = action_update_dump_service_data(ctx);
+            (void)action_update_dump_service_data(ctx);
         }
-        if (result == ACTION_OK) {
-            result = action_start_shutdown(ctx);
-        }
-        return finish_command_transition(ctx, event, result, STATE_SHUTDOWN);
+        return finish_command_exit(ctx, event, result, STATE_SHUTDOWN);
 
     // 504
     case EVENT_CMD_TELEM_REQ:

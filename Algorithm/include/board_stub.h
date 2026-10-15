@@ -43,6 +43,7 @@ void board_stub_set_ped_trigger_events(uint32_t count);
  * by the 20 s alarm monitor. Temperature is milli-degC; voltage mV; current uA.
  * `valid`/`ready` false makes the monitor skip that parameter. */
 void board_stub_set_digital_temp(BoardTempSensorId sensor, int32_t milli_c, bool valid);
+void board_stub_set_analog_temp(bool mcu, int32_t milli_c, bool valid);
 void board_stub_set_power_monitor(BoardPowerMonitorId monitor, uint32_t mv, int32_t ua, bool ready);
 void board_stub_set_ped_powered(bool powered);
 
@@ -60,6 +61,11 @@ void board_stub_set_nand_factory_bad_block(uint8_t bank_id, uint32_t block);
 void board_stub_set_nand_write_fail_at(uint8_t bank_id, uint32_t packet_index);
 void board_stub_set_nand_erase_status(uint8_t bank_id, BoardStatus status);
 void board_stub_set_nand_read_status(uint8_t bank_id, BoardStatus status);
+
+/* Flips bit 0 of the first byte of `packet_index` on every board_nand_read_packet
+ * of that bank (the stored data stays intact). Lets a test model a bit error that
+ * TEST must count in Nerr. UINT32_MAX (the default) disables it. */
+void board_stub_set_nand_corrupt_packet(uint8_t bank_id, uint32_t packet_index);
 void board_stub_set_data_write_status(BoardStatus status);
 void board_stub_set_data_flush_status(BoardStatus status);
 void board_stub_set_data_write_stalled(bool stalled);
@@ -78,7 +84,8 @@ bool board_stub_ped_acquisition_active(void);
 size_t board_stub_ped_register_write_count(void);
 bool board_stub_ped_register_write_at(size_t index, uint8_t* address, uint16_t* value);
 
-/* Sets the value returned by board_rtc_get_time. */
+/* Sets the value returned by board_rtc_get_time; board_rtc_set_time stores its
+ * argument the same way, as the board does. */
 void board_stub_set_rtc_time(uint32_t seconds, uint16_t milliseconds);
 
 #endif /* NATALIA_CORE_BOARD_STUB_H */

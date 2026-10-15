@@ -6,7 +6,8 @@
 #include "status.h"
 
 typedef enum {
-    ADC_INPUT_TERM_A = 0
+    ADC_INPUT_TERM_A = 0,
+    ADC_INPUT_MCU_TEMP = 1
 } AdcInputId;
 
 typedef struct {

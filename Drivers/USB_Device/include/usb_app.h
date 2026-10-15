@@ -13,14 +13,12 @@ void USBapp_DeInit(void);
 void USBapp_Poll(void);
 uint8_t USBapp_CdcIsReady(void);
 
-void vcom_write(uint8_t ch, const void *buffer, uint16_t size);
-void vcom0_write(const void *buffer, uint16_t size);
-bool vcom0_write_blocking(const void *buffer, uint16_t size);
+uint16_t vcom_write(uint8_t ch, const void *buffer, uint16_t size);
+uint16_t vcom0_write(const void *buffer, uint16_t size);
 void vcom0_putc(uint8_t c);
 void vcom0_putstring(const char *s);
 
 bool vcom0_rxrdy(void);
-uint8_t vcom0_getc(void);
 
 bool vcom_process_input(uint8_t ch, uint8_t c);
 

@@ -66,6 +66,7 @@ _Static_assert(BOARD_NAND_BLOCK_COUNT == NAND_MT29F_BLOCKS_PER_LUN,
 #define BOARD_NAND_BANK_COUNT 2U
 #define BOARD_NAND_PSON_CHECK_DELAY_MS 50U
 #define BOARD_NAND_POWER_OFF_HOLD_MS 100U
+#define BOARD_PED_POWER_OFF_HOLD_MS 2000U
 
 #if defined(NATALIA_ENABLE_MRAM_DRIVER) && (NATALIA_ENABLE_MRAM_DRIVER != 0)
 
@@ -110,6 +111,17 @@ static uint8_t board_ina219_pu_initialized;
 static uint8_t board_ina219_ped_initialized;
 #endif
 
+#if defined(NATALIA_ENABLE_TMP112_DRIVER) && (NATALIA_ENABLE_TMP112_DRIVER != 0)
+static uint8_t board_tmp112_initialized;
+#endif
+
+#if (!defined(NATALIA_ENABLE_BOARD_TEST_HOOKS) || (NATALIA_ENABLE_BOARD_TEST_HOOKS == 0)) && \
+    defined(NATALIA_ENABLE_PED_REG_DRIVER) && (NATALIA_ENABLE_PED_REG_DRIVER != 0)
+#define BOARD_PED_POWER_HOLD 1
+static uint8_t board_ped_power_requested;
+static uint32_t board_ped_power_off_ms;
+#endif
+
 #if defined(NATALIA_ENABLE_NAND_DRIVER)
 static void board_nand_power_state_reset(uint8_t switched_off_now) {
     uint32_t index;
@@ -145,6 +157,15 @@ BoardStatus board_init_hardware(void) {
 #if defined(NATALIA_ENABLE_INA219_DRIVER) && (NATALIA_ENABLE_INA219_DRIVER != 0)
     board_ina219_pu_initialized = 0U;
     board_ina219_ped_initialized = 0U;
+#endif
+
+#if defined(NATALIA_ENABLE_TMP112_DRIVER) && (NATALIA_ENABLE_TMP112_DRIVER != 0)
+    board_tmp112_initialized = 0U;
+#endif
+
+#if defined(BOARD_PED_POWER_HOLD)
+    board_ped_power_requested = 0U;
+    board_ped_power_off_ms = timebase_millis();
 #endif
 
     status = board_startup_io_init();
@@ -218,6 +239,10 @@ BoardStatus board_enter_safe_config(void) {
 #if defined(NATALIA_ENABLE_INA219_DRIVER) && (NATALIA_ENABLE_INA219_DRIVER != 0)
     board_ina219_pu_initialized = 0U;
     board_ina219_ped_initialized = 0U;
+#endif
+
+#if defined(NATALIA_ENABLE_TMP112_DRIVER) && (NATALIA_ENABLE_TMP112_DRIVER != 0)
+    board_tmp112_initialized = 0U;
 #endif
 
     return status;
@@ -1852,10 +1877,24 @@ BoardStatus board_ped_get_stats(BoardPedStats* stats) {
 #elif defined(NATALIA_ENABLE_PED_REG_DRIVER) && (NATALIA_ENABLE_PED_REG_DRIVER != 0)
 
 BoardStatus board_ped_power_on(void) {
+    uint32_t elapsed_ms;
+
+    if (board_ped_power_requested == 0U) {
+        elapsed_ms = timebase_millis() - board_ped_power_off_ms;
+        if (elapsed_ms < BOARD_PED_POWER_OFF_HOLD_MS) {
+            timebase_delay_ms_blocking(BOARD_PED_POWER_OFF_HOLD_MS - elapsed_ms);
+        }
+    }
+
+    board_ped_power_requested = 1U;
     return ped_reg_power_on();
 }
 
 BoardStatus board_ped_power_off(void) {
+    if (board_ped_power_requested != 0U) {
+        board_ped_power_requested = 0U;
+        board_ped_power_off_ms = timebase_millis();
+    }
     return ped_reg_power_off();
 }
 
@@ -2562,41 +2601,37 @@ static void board_power_clear_sample(BoardPowerSample* sample) {
     }
 }
 
-BoardStatus board_power_monitor_init(void) {
 #if defined(NATALIA_ENABLE_INA219_DRIVER) && (NATALIA_ENABLE_INA219_DRIVER != 0)
-    const Ina219Config* pu_config;
-    const Ina219Config* ped_config;
+static BoardStatus board_ina219_init_one(Ina219Device* device, Ina219ConfigChannel channel,
+                                         uint8_t* initialized) {
+    const Ina219Config* config;
     BoardStatus status;
 
-    board_ina219_pu_initialized = 0U;
-    board_ina219_ped_initialized = 0U;
+    *initialized = 0U;
 
-    status = ina219_config_get(INA219_CONFIG_CHANNEL_PU, &pu_config);
-    if (status != BOARD_OK) {
-        return status;
+    status = ina219_config_get(channel, &config);
+    if (status == BOARD_OK) {
+        status = ina219_init(device, config);
+    }
+    if (status == BOARD_OK) {
+        *initialized = 1U;
     }
 
-    status = ina219_config_get(INA219_CONFIG_CHANNEL_PED, &ped_config);
-    if (status != BOARD_OK) {
-        return status;
-    }
+    return status;
+}
+#endif
 
-    status = ina219_init(&board_ina219_pu_device, pu_config);
-    if (status != BOARD_OK) {
-        return status;
-    }
+BoardStatus board_power_monitor_init(void) {
+#if defined(NATALIA_ENABLE_INA219_DRIVER) && (NATALIA_ENABLE_INA219_DRIVER != 0)
+    BoardStatus pu_status;
+    BoardStatus ped_status;
 
-    board_ina219_pu_initialized = 1U;
+    pu_status = board_ina219_init_one(&board_ina219_pu_device, INA219_CONFIG_CHANNEL_PU,
+                                      &board_ina219_pu_initialized);
+    ped_status = board_ina219_init_one(&board_ina219_ped_device, INA219_CONFIG_CHANNEL_PED,
+                                       &board_ina219_ped_initialized);
 
-    status = ina219_init(&board_ina219_ped_device, ped_config);
-    if (status != BOARD_OK) {
-        board_ina219_pu_initialized = 0U;
-        return status;
-    }
-
-    board_ina219_ped_initialized = 1U;
-
-    return BOARD_OK;
+    return (pu_status != BOARD_OK) ? pu_status : ped_status;
 #else
     return BOARD_ERR_UNSUPPORTED;
 #endif
@@ -2607,7 +2642,8 @@ BoardStatus board_read_power_monitor(BoardPowerMonitorId monitor,
 #if defined(NATALIA_ENABLE_INA219_DRIVER) && (NATALIA_ENABLE_INA219_DRIVER != 0)
     Ina219Sample ina_sample;
     Ina219Device* device;
-    uint8_t initialized;
+    Ina219ConfigChannel channel;
+    uint8_t* initialized;
     BoardStatus status;
 
     if (sample == 0) {
@@ -2618,20 +2654,26 @@ BoardStatus board_read_power_monitor(BoardPowerMonitorId monitor,
 
     if (monitor == BOARD_POWER_MONITOR_PU) {
         device = &board_ina219_pu_device;
-        initialized = board_ina219_pu_initialized;
+        channel = INA219_CONFIG_CHANNEL_PU;
+        initialized = &board_ina219_pu_initialized;
     } else if (monitor == BOARD_POWER_MONITOR_PED) {
         device = &board_ina219_ped_device;
-        initialized = board_ina219_ped_initialized;
+        channel = INA219_CONFIG_CHANNEL_PED;
+        initialized = &board_ina219_ped_initialized;
     } else {
         return BOARD_ERR_INVALID_ARG;
     }
 
-    if (initialized == 0U) {
-        return BOARD_ERR_NOT_READY;
+    if (*initialized == 0U) {
+        status = board_ina219_init_one(device, channel, initialized);
+        if (status != BOARD_OK) {
+            return status;
+        }
     }
 
     status = ina219_read_sample(device, &ina_sample);
     if (status != BOARD_OK) {
+        *initialized = 0U;
         return status;
     }
 
@@ -2741,11 +2783,13 @@ BoardStatus board_read_power_status(uint32_t* power_status) {
 #include "tc1047.h"
 #endif
 
+#if defined(NATALIA_ENABLE_ADC_DRIVER) && (NATALIA_ENABLE_ADC_DRIVER != 0)
+#include "adc.h"
+#endif
+
 #if defined(NATALIA_ENABLE_TMP112_DRIVER) && (NATALIA_ENABLE_TMP112_DRIVER != 0)
 #include "tmp112.h"
 #include "tmp112_config.h"
-
-static uint8_t board_tmp112_initialized;
 #endif
 
 static void board_digital_temp_clear_sample(BoardDigitalTempSample* sample) {
@@ -2864,6 +2908,125 @@ BoardStatus board_read_temp_milli_c(int32_t* temperature_milli_c) {
 #endif
 }
 
+#if defined(NATALIA_ENABLE_ADC_DRIVER) && (NATALIA_ENABLE_ADC_DRIVER != 0)
+
+#define BOARD_TS_CAL1_ADDR        (0x1FFF75A8UL)
+#define BOARD_TS_CAL2_ADDR        (0x1FFF75CAUL)
+#define BOARD_TS_CAL1_C           (30L)
+#define BOARD_TS_CAL2_C           (110L)
+#define BOARD_TS_CAL_VDDA_MV      (3000L)
+#define BOARD_ANALOG_TEMP_WAIT_MS (5UL)
+
+static uint8_t board_analog_temp_initialized;
+
+static BoardStatus board_analog_temp_init(void) {
+    BoardStatus status;
+
+    if (board_analog_temp_initialized != 0U) {
+        return BOARD_OK;
+    }
+
+#if defined(NATALIA_ENABLE_TC1047_DRIVER) && (NATALIA_ENABLE_TC1047_DRIVER != 0)
+    status = tc1047_init();
+#else
+    status = adc_init();
+#endif
+    if (status == BOARD_OK) {
+        board_analog_temp_initialized = 1U;
+    }
+
+    return status;
+}
+
+static BoardStatus board_analog_temp_wait(void) {
+    uint32_t start_ms = timebase_millis();
+    uint8_t ready = 0U;
+    BoardStatus status;
+
+    for (;;) {
+        status = adc_has_ready_sample(&ready);
+        if ((status != BOARD_OK) || (ready != 0U)) {
+            return status;
+        }
+        if (timebase_elapsed(start_ms, BOARD_ANALOG_TEMP_WAIT_MS)) {
+            (void)adc_stop();
+            return BOARD_ERR_TIMEOUT;
+        }
+    }
+}
+
+static int32_t board_mcu_temp_milli_c(uint16_t raw, uint32_t vdda_mv, uint16_t cal1, uint16_t cal2) {
+    int64_t data = ((int64_t)raw * (int64_t)vdda_mv) / BOARD_TS_CAL_VDDA_MV;
+
+    return (int32_t)((((data - (int64_t)cal1) * (BOARD_TS_CAL2_C - BOARD_TS_CAL1_C) * 1000LL) /
+                      ((int64_t)cal2 - (int64_t)cal1)) + (BOARD_TS_CAL1_C * 1000LL));
+}
+
+BoardStatus board_read_analog_temps(BoardAnalogTemps* temps) {
+    AdcSample sample;
+    BoardStatus status;
+
+    if (temps == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    (void)memset(temps, 0, sizeof(*temps));
+    temps->ts_cal1 = *(const volatile uint16_t*)BOARD_TS_CAL1_ADDR;
+    temps->ts_cal2 = *(const volatile uint16_t*)BOARD_TS_CAL2_ADDR;
+
+    status = board_analog_temp_init();
+    if (status == BOARD_OK) {
+        status = adc_start_sample();
+    }
+    if (status == BOARD_OK) {
+        status = board_analog_temp_wait();
+    }
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+#if defined(NATALIA_ENABLE_TC1047_DRIVER) && (NATALIA_ENABLE_TC1047_DRIVER != 0)
+    {
+        Tc1047Sample bd;
+
+        if ((tc1047_read(&bd) == BOARD_OK) && (bd.ready != 0U)) {
+            temps->bd_milli_c = bd.temperature_milli_c;
+            temps->bd_valid = bd.range_valid;
+        }
+    }
+#endif
+
+    status = adc_read_input(ADC_INPUT_MCU_TEMP, &sample);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    temps->mcu_raw = sample.raw;
+    temps->vdda_mv = sample.vdda_mv;
+
+    if ((temps->ts_cal2 > temps->ts_cal1) && (sample.vdda_mv != 0U)) {
+        temps->mcu_milli_c = board_mcu_temp_milli_c(sample.raw, sample.vdda_mv,
+                                                    temps->ts_cal1, temps->ts_cal2);
+        temps->mcu_valid = 1U;
+    }
+
+    return BOARD_OK;
+}
+
+#else
+
+BoardStatus board_read_analog_temps(BoardAnalogTemps* temps) {
+    if (temps == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    (void)memset(temps, 0, sizeof(*temps));
+
+    return BOARD_ERR_UNSUPPORTED;
+}
+
+#endif
+
 BoardStatus board_temp_digital_init(void) {
 #if defined(NATALIA_ENABLE_TMP112_DRIVER) && (NATALIA_ENABLE_TMP112_DRIVER != 0)
     BoardStatus status;
@@ -2900,11 +3063,15 @@ BoardStatus board_read_digital_temp(BoardTempSensorId sensor, BoardDigitalTempSa
     }
 
     if (board_tmp112_initialized == 0U) {
-        return BOARD_ERR_NOT_READY;
+        status = board_temp_digital_init();
+        if (status != BOARD_OK) {
+            return status;
+        }
     }
 
     status = tmp112_read_sample(address, &tmp_sample);
     if (status != BOARD_OK) {
+        board_tmp112_initialized = 0U;
         return status;
     }
 
@@ -2939,7 +3106,7 @@ BoardStatus board_read_digital_temp_milli_c(BoardTempSensorId sensor, int32_t* t
         return BOARD_ERR_INVALID_ARG;
     }
 
-    if (board_tmp112_initialized == 0U) {
+    if ((board_tmp112_initialized == 0U) && (board_temp_digital_init() != BOARD_OK)) {
         return BOARD_ERR_NOT_READY;
     }
 

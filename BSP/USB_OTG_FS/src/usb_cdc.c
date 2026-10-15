@@ -69,21 +69,6 @@ static BoardStatus usb_cdc_wait_flag_set(volatile uint32_t* reg,
     return BOARD_OK;
 }
 
-static BoardStatus usb_cdc_wait_flag_clear(volatile uint32_t* reg,
-                                           uint32_t mask) {
-    uint32_t timeout = USB_CDC_WAIT_TIMEOUT_ITERATIONS;
-
-    while ((*reg & mask) != 0U) {
-        if (timeout == 0U) {
-            return BOARD_ERR_TIMEOUT;
-        }
-
-        --timeout;
-    }
-
-    return BOARD_OK;
-}
-
 static void usb_cdc_select_clk48(uint32_t source) {
     RCC->CCIPR &= ~RCC_CCIPR_CLK48SEL_Msk;
     RCC->CCIPR |= (source << RCC_CCIPR_CLK48SEL_Pos) &
@@ -337,6 +322,7 @@ BoardStatus usb_cdc_write(const void* buffer, size_t size, size_t* bytes_written
     while (total_written < size) {
         size_t remaining = size - total_written;
         uint16_t chunk_size;
+        uint16_t written;
 
         if (USBapp_CdcIsReady() == 0U) {
             *bytes_written = total_written;
@@ -347,9 +333,12 @@ BoardStatus usb_cdc_write(const void* buffer, size_t size, size_t* bytes_written
                          ? (uint16_t)USB_CDC_WRITE_CHUNK_SIZE
                          : (uint16_t)remaining;
 
-        vcom0_write(&source[total_written], chunk_size);
+        written = vcom0_write(&source[total_written], chunk_size);
+        total_written += written;
 
-        total_written += chunk_size;
+        if (written < chunk_size) {
+            break;
+        }
     }
 
     *bytes_written = total_written;

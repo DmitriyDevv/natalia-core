@@ -13,6 +13,12 @@
 #include "usb_log.h"
 #include "usb_app.h"
 #include "usbdev_binding.h"
+#include "timebase.h"
+
+void VCOM0_rx_IRQHandler(void);
+void VCOM0_tx_IRQHandler(void);
+
+#define VCOM_TX_STALL_TIMEOUT_MS 50U
 
 static const struct cfgdesc_cdc_ ConfigDesc;
 
@@ -93,30 +99,23 @@ static void send_serialstate_notif(uint8_t ch) {
             ssnotif.wSerialState &
             (CDC_SERIAL_STATE_TX_CARRIER | CDC_SERIAL_STATE_RX_CARRIER);
 
-        cdc_data[ch].SerialState ^=
+        cdc_data[ch].SerialState ^= (uint16_t)(
             ssnotif.wSerialState &
-            ~(CDC_SERIAL_STATE_TX_CARRIER | CDC_SERIAL_STATE_RX_CARRIER);
+            ~(uint32_t)(CDC_SERIAL_STATE_TX_CARRIER | CDC_SERIAL_STATE_RX_CARRIER));
     }
 }
 
-static uint8_t vcom_data_in_epaddr(uint8_t ch) {
-    switch (ch) {
-    case 0U:
-        return ConfigDesc.cdc[0].cdcdesc.cdcin.bEndpointAddress;
-    default:
-        return 0U;
-    }
-}
-
-void vcom_write(uint8_t ch, const void* buffer, uint16_t size) {
+uint16_t vcom_write(uint8_t ch, const void* buffer, uint16_t size) {
     const uint8_t* source;
+    uint16_t written = 0U;
+    uint32_t wait_start_ms;
 
     if ((ch >= USBD_CDC_CHANNELS) || ((buffer == 0) && (size > 0U))) {
-        return;
+        return 0U;
     }
 
     if (size == 0U) {
-        return;
+        return 0U;
     }
 
     source = buffer;
@@ -126,13 +125,16 @@ void vcom_write(uint8_t ch, const void* buffer, uint16_t size) {
         uint16_t free_size;
         uint16_t chunk_size;
 
+        wait_start_ms = timebase_millis();
         while ((cdp->session.connected != false) &&
             (cdp->session.TxLength == CDC_DATA_EP_SIZE)) {
-            __NOP();
+            if (timebase_elapsed(wait_start_ms, VCOM_TX_STALL_TIMEOUT_MS)) {
+                return written;
+            }
         }
 
         if (cdp->session.connected == false) {
-            return;
+            return written;
         }
 
         __disable_irq();
@@ -145,6 +147,7 @@ void vcom_write(uint8_t ch, const void* buffer, uint16_t size) {
         cdp->session.TxLength = (uint8_t)(cdp->session.TxLength + chunk_size);
         source += chunk_size;
         size = (uint16_t)(size - chunk_size);
+        written = (uint16_t)(written + chunk_size);
 
         if (cdp->session.TxLength == CDC_DATA_EP_SIZE) {
             cdp->session.TxTout = 0U;
@@ -155,14 +158,16 @@ void vcom_write(uint8_t ch, const void* buffer, uint16_t size) {
 
         __enable_irq();
     }
+
+    return written;
 }
 
-void vcom0_write(const void* buffer, uint16_t size) {
-    vcom_write(0U, buffer, size);
+uint16_t vcom0_write(const void* buffer, uint16_t size) {
+    return vcom_write(0U, buffer, size);
 }
 
 void vcom0_putc(uint8_t c) {
-    vcom_write(0U, &c, 1U);
+    (void)vcom_write(0U, &c, 1U);
 }
 
 void vcom0_putstring(const char* s) {
@@ -170,7 +175,7 @@ void vcom0_putstring(const char* s) {
         return;
     }
 
-    vcom_write(0U, s, (uint16_t)strlen(s));
+    (void)vcom_write(0U, s, (uint16_t)strlen(s));
 }
 
 __attribute__((weak)) bool vcom_process_input(uint8_t ch, uint8_t c) {
@@ -188,26 +193,6 @@ static void allow_rx(uint8_t epn) {
 
 bool vcom0_rxrdy(void) {
     return cdc_data[0].session.RxLength != 0U;
-}
-
-uint8_t vcom0_getc(void) {
-    uint8_t c;
-
-    while (!vcom0_rxrdy()) {
-        __NOP();
-    }
-
-    c = cdc_data[0].RxData[cdc_data[0].session.RxIdx];
-
-    ++cdc_data[0].session.RxIdx;
-
-    if (cdc_data[0].session.RxIdx == cdc_data[0].session.RxLength) {
-        cdc_data[0].session.RxLength = 0U;
-        cdc_data[0].session.RxIdx = 0U;
-        allow_rx(ConfigDesc.cdc[0].cdcdesc.cdcout.bEndpointAddress);
-    }
-
-    return c;
 }
 
 #endif

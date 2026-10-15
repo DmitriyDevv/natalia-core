@@ -36,14 +36,14 @@ ActionResult action_send_dump_ack(const SystemContext* ctx, const SystemEvent* e
 
 ActionResult action_send_ack_status(const SystemEvent* event, TransportAckStatus status);
 
-ActionResult action_send_telem(const SystemContext *ctx);
+ActionResult action_send_telem(SystemContext *ctx);
 ActionResult action_send_version(void);
 
 ActionResult action_set_time(const SystemEvent* event);
 
 ActionResult action_apply_config(SystemContext* ctx, const SystemEvent* event);
 
-ActionResult action_write_mram(const SystemContext* ctx, const SystemEvent* event);
+ActionResult action_write_mram(SystemContext* ctx, const SystemEvent* event);
 
 ActionResult action_recalc_masked_alarm(SystemContext* ctx);
 
@@ -67,11 +67,11 @@ ActionResult action_update_nand_state(SystemContext* ctx);
 
 ActionResult action_clear_nand_full_flag(SystemContext* ctx);
 
-ActionResult action_update_service_data(const SystemContext* ctx);
-ActionResult action_update_erase_service_data(const SystemContext* ctx);
-ActionResult action_update_dump_service_data(const SystemContext* ctx);
+ActionResult action_update_service_data(SystemContext* ctx);
+ActionResult action_update_erase_service_data(SystemContext* ctx);
+ActionResult action_update_dump_service_data(SystemContext* ctx);
 
-ActionResult action_update_test_service_data(const SystemContext* ctx);
+ActionResult action_update_test_service_data(SystemContext* ctx);
 
 ActionResult action_finish_test(SystemContext* ctx, const SystemEvent* event);
 

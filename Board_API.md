@@ -455,6 +455,14 @@ MRAM (SPI1, SPI3) инициализируются заново: в режиме
 
 Включить / выключить питание ПЭД. Без параметров.
 
+«Порядок работы» §9: повторное включение ПЭД — не раньше чем через 2 с после
+выключения. `board_ped_power_on` (вариант с PED_REG) сам ждёт остаток этих 2 с
+(`BOARD_PED_POWER_OFF_HOLD_MS`, блокирующая пауза, как 100 мс у NAND). Отсчёт идёт
+от `board_ped_power_off`, которому предшествовало включение, и от
+`board_init_hardware` (после тёплого перезапуска ПЭД могла оставаться под
+питанием). Повторный вызов `board_ped_power_off` при уже выключенной ПЭД отсчёт
+не сдвигает. Заглушка паузу не моделирует.
+
 #### `board_ped_is_powered(uint8_t* is_powered)`
 
 Подтверждение питания ПЭД.
@@ -619,6 +627,11 @@ MRAM (SPI1, SPI3) инициализируются заново: в режиме
 | -------- | ----------------------- | ----- | ------------------------- |
 | `time`   | `const InstrumentTime*` | вход  | Устанавливаемое время.    |
 
+Приборное время программное (якорь поверх секундного счётчика RTC) и после
+каждого сброса начинается с нуля. При загрузке `action_load_mram` ставит на часы
+«Начальное приборное время RTC» из настроек MRAM (КУ 8, байты 76–81), если его
+миллисекунды меньше 1000.
+
 #### `board_rtc_take_1hz_events(uint32_t* event_count)`
 
 Забрать накопленные секундные события 1 Гц (счётчик обнуляется).
@@ -642,6 +655,23 @@ MRAM (SPI1, SPI3) инициализируются заново: в режиме
 
 Инициализация / пуск / останов измерений. Без параметров.
 
+#### `board_read_analog_temps(BoardAnalogTemps* temps)`
+
+Обе аналоговые температуры за один пуск АЦП: встроенный датчик МК (ADC1_IN17,
+`ADC_CCR_TSEN`) и TC1047 блока детекторов (ADC12_IN5). Источник для аварий
+`MC_Temp` / `BD_Temp` и для телеметрии. АЦП инициализируется при первом вызове.
+
+| Поле          | Описание                                                            |
+| ------------- | ------------------------------------------------------------------- |
+| `mcu_milli_c` | Температура МК, м°C: `(CAL2_T − 30) / (CAL2 − CAL1) · (raw · VDDA / 3000 − CAL1) + 30`, CAL2_T = 110 °C (RM0351) |
+| `bd_milli_c`  | Температура БД (TC1047), м°C                                        |
+| `vdda_mv`     | VDDA по VREFINT                                                     |
+| `mcu_raw`, `ts_cal1`, `ts_cal2` | Сырой код и калибровки (0x1FFF75A8 / 0x1FFF75CA) |
+| `mcu_valid`, `bd_valid` | Достоверность; недостоверное значение контроль пропускает |
+
+Без `NATALIA_ENABLE_ADC_DRIVER` возвращает `BOARD_ERR_UNSUPPORTED` — аварии 0 и 3
+тогда не контролируются. Без `NATALIA_ENABLE_TC1047_DRIVER` `bd_valid = 0`.
+
 #### `board_read_temp(BoardTempSample* sample)`
 
 Полный отсчёт аналогового датчика.
@@ -664,7 +694,9 @@ MRAM (SPI1, SPI3) инициализируются заново: в режиме
 
 #### `board_temp_digital_init(void)`
 
-Инициализация цифровых датчиков. Без параметров.
+Инициализация шины цифровых датчиков. Вызывать не обязательно: чтение само
+инициализирует шину, если она не готова (при первом обращении, после
+`board_init_hardware` / `board_enter_safe_config` и после ошибки чтения).
 
 #### `board_read_digital_temp(BoardTempSensorId sensor, BoardDigitalTempSample* sample)`
 
@@ -690,7 +722,11 @@ MRAM (SPI1, SPI3) инициализируются заново: в режиме
 
 #### `board_power_monitor_init(void)`
 
-Инициализация мониторов. Без параметров.
+Инициализация обоих мониторов, каждого независимо: отсутствие монитора ПЭД (ПЭД
+без питания) не выключает монитор ПУ. Возвращает первую ошибку. Вызывать не
+обязательно: `board_read_power_monitor` инициализирует монитор при первом
+обращении, после `board_init_hardware` / `board_enter_safe_config` и после ошибки
+чтения (регистры INA219 ПЭД теряются при выключении ПЭД).
 
 #### `board_read_power_monitor(BoardPowerMonitorId monitor, BoardPowerSample* sample)`
 
@@ -991,9 +1027,9 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 
 | Функция | Поведение |
 | --- | --- |
-| `board_mram_read` / `board_mram_write` | Настоящее чтение/запись массива в ОЗУ с проверкой границ копии (1024 байта). |
+| `board_mram_read` / `board_mram_write` | Настоящее чтение/запись массива в ОЗУ с проверкой границ копии (1024 байта). Успешная запись делает копию валидной — как на плате, где запись пересчитывает CRC копии. |
 | `board_mram_check_crc` | Отдаёт флаг, заданный `board_stub_set_mram_crc_valid()` отдельно для каждой копии; по умолчанию обе валидны. |
-| `board_mram_restore_copy` | Настоящее копирование копии в копию. |
+| `board_mram_restore_copy` | Настоящее копирование копии в копию; признак валидности копируется вместе с данными, как CRC на плате. |
 | `board_mram_write_test_result` / `board_mram_read_test_result` | Настоящие, отдельная область на банк и копию. |
 
 Отказ записи включается тестом: `board_stub_set_mram_write_fail(true)` заставляет
@@ -1015,7 +1051,7 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 | `board_nand_open_write` | Задаёт стартовый счётчик пакетов; выставляет признак заполнения, если счётчик достиг ёмкости. |
 | `board_nand_write_packet` | Настоящая запись 2048 байт, инкремент счётчика. При заполненном банке — `BOARD_ERR_IO` и признак заполнения. |
 | `board_nand_write_poll` / `board_nand_write_flush` | **Всегда `is_idle` / `is_done` = 1** — запись мгновенная. |
-| `board_nand_open_read` / `board_nand_read_packet` / `board_nand_read_next_packet` | Настоящие, потоковое чтение с внутренним индексом. |
+| `board_nand_open_read` / `board_nand_read_packet` / `board_nand_read_next_packet` | Настоящие, потоковое чтение с внутренним индексом. `board_stub_set_nand_corrupt_packet(bank, packet)` инвертирует бит 0 первого байта этого пакета при каждом `board_nand_read_packet` (хранимые данные не меняются) — модель битовой ошибки для TEST. |
 | `board_nand_get_capacity_packets` | Всегда `256`. |
 | `board_nand_get_committed_packet_count` | Настоящий счётчик. |
 | `board_nand_erase_start` | Настоящее стирание: `0xFF`, сброс счётчиков и признака заполнения. |
@@ -1048,7 +1084,7 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 | Функция | Поведение |
 | --- | --- |
 | `board_rtc_get_time` | Отдаёт заданное `board_stub_set_rtc_time()`; по умолчанию `0 с, 0 мс`. |
-| `board_rtc_set_time` | `BOARD_OK`; отвергает `milliseconds >= 1000`. Значение не запоминается. |
+| `board_rtc_set_time` | Запоминает время, его отдаёт `board_rtc_get_time` (как на плате); отвергает `milliseconds >= 1000`. |
 | `board_rtc_take_1hz_events` | Отдаёт заданное `board_stub_set_rtc_1hz_events()` и обнуляет счётчик; по умолчанию `0`. |
 
 Часы не идут сами: заглушка отдаёт ровно то, что записал тест. Сценарии, где
@@ -1059,6 +1095,7 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 | Функция | Значение |
 | --- | --- |
 | `board_read_temp` / `board_read_temp_milli_c` | **Всегда `25000` м°C**, `ready = 1`, `range_valid = 1` — аналоговый канал не инжектируется |
+| `board_read_analog_temps` | Задаётся `board_stub_set_analog_temp(mcu, milli_c, valid)` для МК и БД; по умолчанию `25000` м°C, годные |
 | `board_read_digital_temp` / `board_read_digital_temp_milli_c` | Задаётся `board_stub_set_digital_temp()` отдельно для `PU` и `PED`; по умолчанию `25000` м°C, годные |
 | `board_read_power_monitor` | Задаётся `board_stub_set_power_monitor()` отдельно для `PU` и `PED`; по умолчанию `3300` мВ, `0` мкА, `ready = 1` |
 | `board_read_power_status` | `0` |
@@ -1069,9 +1106,8 @@ board_ped_take_trigger_events(&count);                 // забрать три�
 `valid` / `ready` в `false` заставляет контроль **пропустить** параметр, а не
 поднять ложную аварию.
 
-Аналоговый канал (`board_read_temp`) остаётся константой. Из-за этого признаки
-температуры МК и блока детекторов через заглушку не проверяются — впрочем, они
-и не реализованы: Board_API не разделяет два аналоговых канала.
+Аналоговые температуры МК и БД (`board_read_analog_temps`) инжектируются так же,
+аварии 0 и 3 проверяются в `test_alarm_monitor`.
 
 ### Точки внедрения для тестов
 

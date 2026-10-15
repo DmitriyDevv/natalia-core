@@ -336,3 +336,115 @@ target_compile_options(test_nand_storage PRIVATE
 )
 
 add_test(NAME test_nand_storage COMMAND test_nand_storage)
+
+add_executable(test_alarm_policy
+        test_alarm_policy.c
+)
+
+target_link_libraries(test_alarm_policy PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_alarm_policy PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_alarm_policy COMMAND test_alarm_policy)
+
+add_executable(test_bank_progress
+        test_bank_progress.c
+)
+
+target_link_libraries(test_bank_progress PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_bank_progress PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_bank_progress COMMAND test_bank_progress)
+
+add_executable(test_event_queue
+        test_event_queue.c
+)
+
+target_link_libraries(test_event_queue PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_event_queue PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_event_queue COMMAND test_event_queue)
+
+add_executable(test_alarm_mode
+        test_alarm_mode.c
+)
+
+target_link_libraries(test_alarm_mode PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_alarm_mode PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_alarm_mode COMMAND test_alarm_mode)
+
+add_executable(test_duty
+        test_duty.c
+)
+
+target_link_libraries(test_duty PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_duty PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_duty COMMAND test_duty)
+
+add_executable(test_mram_recovery
+        test_mram_recovery.c
+)
+
+target_link_libraries(test_mram_recovery PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_mram_recovery PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_mram_recovery COMMAND test_mram_recovery)
+
+add_executable(test_transport_tx
+        test_transport_tx.c
+)
+
+target_link_libraries(test_transport_tx PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_transport_tx PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_transport_tx COMMAND test_transport_tx)

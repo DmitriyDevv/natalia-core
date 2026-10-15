@@ -50,7 +50,8 @@
 #define TRANSPORT_SHORT_PAYLOAD_SIZE               (6U)
 #define TRANSPORT_SET_CFG_PAYLOAD_SIZE             (68U)
 #define TRANSPORT_FILL_BYTE                        (0xAAU)
-#define TRANSPORT_TX_QUEUE_LENGTH                  (4U)
+#define TRANSPORT_TX_QUEUE_LENGTH                  (8U)
+#define TRANSPORT_INLINE_PAYLOAD_SIZE              (TRANSPORT_TELEMETRY_SIZE)
 #define TRANSPORT_TX_MAX_RETRIES                   (3U)
 
 #define TRANSPORT_CAN_CONTROL_DEST_FROM_SENDER     (0x0001U)
@@ -62,7 +63,7 @@ typedef struct {
     uint16_t message_id;
     uint16_t address_to;
     uint16_t length;
-    uint8_t payload[TRANSPORT_SHORT_PAYLOAD_SIZE];
+    uint8_t payload[TRANSPORT_INLINE_PAYLOAD_SIZE];
     const uint8_t* long_data;
     uint8_t retries_done;
 } TransportTxItem;
@@ -129,12 +130,21 @@ static uint16_t transport_effective_destination(void) {
     return transport_remote_address;
 }
 
-static BoardStatus transport_enqueue_short_message(uint16_t message_id,
-                                                   const uint8_t* payload) {
+static BoardStatus transport_enqueue_message(uint16_t message_id,
+                                             const uint8_t* data,
+                                             uint16_t length) {
     TransportTxItem* item;
+    bool use_long_buffer;
 
-    if (payload == NULL) {
+    if ((data == NULL) || (length == 0U) ||
+        (length > sizeof(transport_long_tx_buffer))) {
         return BOARD_ERR_INVALID_ARG;
+    }
+
+    use_long_buffer = (length > TRANSPORT_INLINE_PAYLOAD_SIZE);
+
+    if (use_long_buffer && transport_long_tx_busy) {
+        return BOARD_ERR_BUSY;
     }
 
     if (transport_tx_count >= TRANSPORT_TX_QUEUE_LENGTH) {
@@ -145,11 +155,17 @@ static BoardStatus transport_enqueue_short_message(uint16_t message_id,
 
     item->message_id = message_id;
     item->address_to = transport_effective_destination();
-    item->length = TRANSPORT_SHORT_PAYLOAD_SIZE;
-    item->long_data = NULL;
+    item->length = length;
     item->retries_done = 0U;
 
-    memcpy(item->payload, payload, TRANSPORT_SHORT_PAYLOAD_SIZE);
+    if (use_long_buffer) {
+        memcpy(transport_long_tx_buffer, data, length);
+        transport_long_tx_busy = true;
+        item->long_data = transport_long_tx_buffer;
+    } else {
+        memcpy(item->payload, data, length);
+        item->long_data = NULL;
+    }
 
     transport_tx_head = transport_next_tx_index(transport_tx_head);
     ++transport_tx_count;
@@ -157,39 +173,9 @@ static BoardStatus transport_enqueue_short_message(uint16_t message_id,
     return BOARD_OK;
 }
 
-static BoardStatus transport_enqueue_long_message(uint16_t message_id,
-                                                  const uint8_t* data,
-                                                  uint16_t length) {
-    TransportTxItem* item;
-
-    if ((data == NULL) || (length == 0U) ||
-        (length > sizeof(transport_long_tx_buffer))) {
-        return BOARD_ERR_INVALID_ARG;
-    }
-
-    if (transport_long_tx_busy) {
-        return BOARD_ERR_BUSY;
-    }
-
-    if (transport_tx_count >= TRANSPORT_TX_QUEUE_LENGTH) {
-        return BOARD_ERR_BUSY;
-    }
-
-    memcpy(transport_long_tx_buffer, data, length);
-    transport_long_tx_busy = true;
-
-    item = &transport_tx_queue[transport_tx_head];
-
-    item->message_id = message_id;
-    item->address_to = transport_effective_destination();
-    item->length = length;
-    item->long_data = transport_long_tx_buffer;
-    item->retries_done = 0U;
-
-    transport_tx_head = transport_next_tx_index(transport_tx_head);
-    ++transport_tx_count;
-
-    return BOARD_OK;
+static BoardStatus transport_enqueue_short_message(uint16_t message_id,
+                                                   const uint8_t* payload) {
+    return transport_enqueue_message(message_id, payload, TRANSPORT_SHORT_PAYLOAD_SIZE);
 }
 
 static void transport_drop_front_tx_message(void) {
@@ -554,36 +540,41 @@ BoardStatus transport_send_status(const SystemContext* ctx) {
                                            payload);
 }
 
-void transport_read_measurements(TransportMeasurements* measurements) {
+void transport_read_measurements(const SystemContext* ctx, TransportMeasurements* measurements) {
     BoardDigitalTempSample pu_temp = {0};
     BoardDigitalTempSample ped_temp = {0};
-    BoardTempSample bd_temp = {0};
+    BoardAnalogTemps analog_temps;
     BoardPowerSample pu_power = {0};
     BoardPowerSample ped_power = {0};
 
-    if (measurements == NULL) {
+    if ((ctx == NULL) || (measurements == NULL)) {
         return;
     }
 
     memset(measurements, 0, sizeof(*measurements));
 
-    /* MC temperature stays 0: the STM32 internal temperature is not exposed by
-     * Board_API. */
+    if (board_read_analog_temps(&analog_temps) == BOARD_OK) {
+        if (analog_temps.mcu_valid != 0U) {
+            measurements->mc_temp = transport_temp_milli_to_deci(analog_temps.mcu_milli_c);
+        }
+        if (analog_temps.bd_valid != 0U) {
+            measurements->bd_temp = transport_temp_milli_to_deci(analog_temps.bd_milli_c);
+        }
+    }
     if (board_read_digital_temp(BOARD_TEMP_SENSOR_PU, &pu_temp) == BOARD_OK) {
         measurements->pu_temp = transport_temp_milli_to_deci(pu_temp.temperature_milli_c);
     }
-    if (board_read_digital_temp(BOARD_TEMP_SENSOR_PED, &ped_temp) == BOARD_OK) {
+    if (ctx->ped.is_powered &&
+        (board_read_digital_temp(BOARD_TEMP_SENSOR_PED, &ped_temp) == BOARD_OK)) {
         measurements->ped_temp = transport_temp_milli_to_deci(ped_temp.temperature_milli_c);
-    }
-    if (board_read_temp(&bd_temp) == BOARD_OK) {
-        measurements->bd_temp = transport_temp_milli_to_deci(bd_temp.temperature_milli_c);
     }
 
     if (board_read_power_monitor(BOARD_POWER_MONITOR_PU, &pu_power) == BOARD_OK) {
         measurements->pu_voltage = transport_clamp_u16(pu_power.bus_voltage_mv);
         measurements->pu_current = transport_current_ua_to_ma(pu_power.current_ua);
     }
-    if (board_read_power_monitor(BOARD_POWER_MONITOR_PED, &ped_power) == BOARD_OK) {
+    if (ctx->ped.is_powered &&
+        (board_read_power_monitor(BOARD_POWER_MONITOR_PED, &ped_power) == BOARD_OK)) {
         measurements->ped_voltage = transport_clamp_u16(ped_power.bus_voltage_mv);
         measurements->ped_current = transport_current_ua_to_ma(ped_power.current_ua);
     }
@@ -596,6 +587,8 @@ BoardStatus transport_send_telemetry(const SystemContext* ctx) {
     uint32_t board_status_word = 0U;
     MramStoreConfig cfg = {0};
     MramStoreServiceData svc = {0};
+    bool mram_ok = true;
+    BoardStatus status;
 
     if (ctx == NULL) {
         return BOARD_ERR_INVALID_ARG;
@@ -607,7 +600,7 @@ BoardStatus transport_send_telemetry(const SystemContext* ctx) {
     transport_write_le_u16(&buffer[0], rtc.milliseconds);
     transport_write_le_u32(&buffer[2], rtc.seconds);
 
-    transport_read_measurements(&measurements);
+    transport_read_measurements(ctx, &measurements);
     transport_write_le_u16(&buffer[6], measurements.mc_temp);
     transport_write_le_u16(&buffer[8], measurements.pu_temp);
     transport_write_le_u16(&buffer[10], measurements.ped_temp);
@@ -631,8 +624,35 @@ BoardStatus transport_send_telemetry(const SystemContext* ctx) {
         transport_write_le_u16(&buffer[34], ctx->observe.observe_params);
     }
 
-    (void)mram_store_load_config(&cfg);
-    (void)mram_store_load_service_data(&svc);
+    if (mram_store_load_config(&cfg) != BOARD_OK) {
+        mram_ok = false;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.mcu_pu_temp_min = ctx->mcu_temp_min;
+        cfg.mcu_pu_temp_max = ctx->mcu_temp_max;
+        cfg.pu_temp_min = ctx->pu_temp_min;
+        cfg.pu_temp_max = ctx->pu_temp_max;
+        cfg.ped_temp_min = ctx->ped_temp_min;
+        cfg.ped_temp_max = ctx->ped_temp_max;
+        cfg.det_temp_min = ctx->bd_temp_min;
+        cfg.det_temp_max = ctx->bd_temp_max;
+        cfg.pu_voltage_min = ctx->pu_voltage_min;
+        cfg.pu_voltage_max = ctx->pu_voltage_max;
+        cfg.pu_current_min = ctx->pu_current_min;
+        cfg.pu_current_max = ctx->pu_current_max;
+        cfg.ped_voltage_min = ctx->ped_voltage_min;
+        cfg.ped_voltage_max = ctx->ped_voltage_max;
+        cfg.ped_current_min = ctx->ped_current_min;
+        cfg.ped_current_max = ctx->ped_current_max;
+        cfg.alarm_mask = (uint16_t)(ctx->alarm_mask & 0xFFFFU);
+        cfg.can_control = ctx->can_control;
+        cfg.destination_id = transport_remote_address;
+        cfg.device_id = transport_local_address;
+    }
+    if (mram_store_load_service_data(&svc) != BOARD_OK) {
+        mram_ok = false;
+        memset(&svc, 0, sizeof(svc));
+        svc.observe_session_id = ctx->observe_session_id;
+    }
 
     transport_write_le_u16(&buffer[36], (uint16_t)cfg.mcu_pu_temp_min);
     transport_write_le_u16(&buffer[38], (uint16_t)cfg.mcu_pu_temp_max);
@@ -657,6 +677,14 @@ BoardStatus transport_send_telemetry(const SystemContext* ctx) {
     transport_write_le_u16(&buffer[76], cfg.init_rtc_time_ms);
     transport_write_le_u32(&buffer[78], cfg.init_rtc_time);
     transport_write_le_u16(&buffer[82], svc.observe_session_id);
+    if (ctx->state == STATE_OBSERVE) {
+        if (ctx->observe.bank == NAND_BANK_1) {
+            svc.nand1_packet_count = ctx->observe.committed_packet_count;
+        } else if (ctx->observe.bank == NAND_BANK_2) {
+            svc.nand2_packet_count = ctx->observe.committed_packet_count;
+        }
+    }
+
     transport_write_le_u24(&buffer[84], svc.nand1_packet_count);
     transport_write_le_u24(&buffer[87], svc.nand2_packet_count);
     transport_write_le_u16(&buffer[90], svc.nand1_erase_count);
@@ -672,8 +700,12 @@ BoardStatus transport_send_telemetry(const SystemContext* ctx) {
     buffer[107] = NATALIA_SW_VERSION_MINOR;
     buffer[108] = NATALIA_SW_VERSION_EXTRA;
 
-    return transport_enqueue_long_message(TRANSPORT_TS_TELEMETRY_MSG_ID,
-                                          buffer, TRANSPORT_TELEMETRY_SIZE);
+    status = transport_enqueue_message(TRANSPORT_TS_TELEMETRY_MSG_ID,
+                                            buffer, TRANSPORT_TELEMETRY_SIZE);
+    if ((status == BOARD_OK) && !mram_ok) {
+        return BOARD_ERR_CRC;
+    }
+    return status;
 }
 
 BoardStatus transport_send_version(void) {
@@ -691,7 +723,7 @@ BoardStatus transport_send_version(void) {
 }
 
 BoardStatus transport_send_test_result(const uint8_t* data, uint16_t length) {
-    return transport_enqueue_long_message(TRANSPORT_TS_TEST_RESULT_MSG_ID,
+    return transport_enqueue_message(TRANSPORT_TS_TEST_RESULT_MSG_ID,
                                           data, length);
 }
 
@@ -1060,6 +1092,10 @@ static BoardStatus transport_build_set_cfg_event(const BoardCommMessage* message
         return BOARD_ERR_INVALID_ARG;
     }
 
+    if (transport_read_le_u16(&data[42]) >= 1000U) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
     memset(event, 0, sizeof(*event));
 
     event->type = EVENT_CMD_SET_CFG;
@@ -1395,8 +1431,7 @@ static void transport_handle_known_telemetry(SystemContext* ctx,
 }
 
 static bool transport_message_is_for_this_node(const BoardCommMessage* message) {
-    return (message->address_to == transport_local_address) ||
-        (message->address_to == BOARD_COMM_ADDR_NA);
+    return message->address_to == transport_local_address;
 }
 
 static void transport_handle_message(SystemContext* ctx,

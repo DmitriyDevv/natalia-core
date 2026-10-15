@@ -21,7 +21,7 @@ static uint8_t erase_bank_id(NandBank bank) {
 
 static void finish_erase_step(SystemContext* ctx) {
     (void)ctx;
-    (void)system_event_queue_push_back_type(EVENT_ERASE_DONE);
+    (void)system_event_queue_post_type(EVENT_ERASE_DONE);
 }
 
 static void erase_mode_wait_step(SystemContext* ctx) {
@@ -93,7 +93,7 @@ static void fill_test_pattern(TestContext* test) {
 
 static void finish_test_step(SystemContext* ctx) {
     (void)ctx;
-    (void)system_event_queue_push_back_type(EVENT_TEST_DONE);
+    (void)system_event_queue_post_type(EVENT_TEST_DONE);
 }
 
 static void fail_test_step(SystemContext* ctx, uint32_t status_flag) {
@@ -289,7 +289,7 @@ static uint8_t dump_bank_id(NandBank bank) {
 
 static void finish_dump_step(SystemContext* ctx) {
     (void)ctx;
-    (void)system_event_queue_push_back_type(EVENT_DUMP_DONE);
+    (void)system_event_queue_post_type(EVENT_DUMP_DONE);
 }
 
 static void fail_dump_step(SystemContext* ctx) {
@@ -428,6 +428,25 @@ static void collect_nand_power_fault(SystemContext *ctx, uint8_t bank_id) {
     }
 }
 
+static void collect_ped_faults(SystemContext *ctx) {
+    uint32_t faults = 0U;
+
+    if ((board_ped_take_faults(&faults) != BOARD_OK) || (faults == 0U)) {
+        return;
+    }
+
+    if ((faults & BOARD_PED_FAULT_POWER) != 0U) {
+        ctx->ped.is_powered = false;
+        alarm_raise(ctx, ALARM_PED_PS);
+    }
+    if ((faults & BOARD_PED_FAULT_READY) != 0U) {
+        alarm_raise(ctx, ALARM_PED_DIR);
+    }
+    if ((faults & BOARD_PED_FAULT_STATUS) != 0U) {
+        alarm_raise(ctx, ALARM_PED_ST);
+    }
+}
+
 void algorithm_collect_hw_events(SystemContext *ctx) {
     uint32_t count;
 
@@ -437,6 +456,9 @@ void algorithm_collect_hw_events(SystemContext *ctx) {
 
     collect_nand_power_fault(ctx, 1U);
     collect_nand_power_fault(ctx, 2U);
+    if (ctx->state != STATE_INIT) {
+        collect_ped_faults(ctx);
+    }
 
     count = 0U;
     if (board_rtc_take_1hz_events(&count) == BOARD_OK) {

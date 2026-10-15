@@ -168,6 +168,18 @@ uint32_t board_elapsed_us(uint32_t timestamp);
 BoardStatus board_temp_init(void);
 BoardStatus board_temp_start(void);
 BoardStatus board_temp_stop(void);
+typedef struct {
+    int32_t mcu_milli_c;
+    int32_t bd_milli_c;
+    uint32_t vdda_mv;
+    uint16_t mcu_raw;
+    uint16_t ts_cal1;
+    uint16_t ts_cal2;
+    uint8_t mcu_valid;
+    uint8_t bd_valid;
+} BoardAnalogTemps;
+
+BoardStatus board_read_analog_temps(BoardAnalogTemps* temps);
 BoardStatus board_read_temp(BoardTempSample* sample);
 BoardStatus board_read_temp_milli_c(int32_t* temperature_milli_c);
 

@@ -630,6 +630,30 @@ static void kt_before_first_second_unlocks_events(void) {
     assert_formats(count, expected, sizeof(expected));
 }
 
+/* PED does not confirm power on start: with ALARM_PED_PS enabled the start is
+ * refused and the FSM enters ALARM; with it masked off the procedure goes on and
+ * the session starts, the bit stays visible in the alarm status. */
+static void ped_power_fault_on_start(bool masked_off) {
+    begin_test();
+    if (masked_off) {
+        ctx.alarm_mask = alarm_sanitize_mask(ALARM_ALL_MASK & ~ALARM_PED_PS);
+    }
+    board_stub_set_ped_powered(false);
+
+    enqueue_observe_start(PARAMS_EVENTS_NMAX_1, true);
+    step();
+
+    assert((ctx.alarm_status & ALARM_PED_PS) != 0U);
+    if (masked_off) {
+        assert(ctx.state == STATE_OBSERVE);
+        assert(ctx.masked_alarm == 0U);
+        wait_stage(OBSERVE_STAGE_ACTIVE);
+    } else {
+        assert(ctx.state == STATE_ALARM);
+        assert(!board_stub_ped_acquisition_active());
+    }
+}
+
 int main(void) {
     session_writes_formats_and_finishes_on_next_second();
     finish_times_out_without_second();
@@ -641,6 +665,8 @@ int main(void) {
     full_bank_ends_in_duty();
     events_wait_for_first_kt();
     kt_before_first_second_unlocks_events();
+    ped_power_fault_on_start(false);
+    ped_power_fault_on_start(true);
 
     return 0;
 }

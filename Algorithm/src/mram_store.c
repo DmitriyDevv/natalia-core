@@ -308,17 +308,14 @@ BoardStatus mram_store_load_block_map(uint8_t bank, BoardNandBlockMap *map, uint
     }
 
     if (valid1 != 0U) {
-        if (valid2 == 0U) {
-            (void)board_mram_write_block_map(MRAM_COPY_2, bank, map);
-        }
         *is_valid = 1U;
-        return BOARD_OK;
+        return (valid2 == 0U) ? board_mram_write_block_map(MRAM_COPY_2, bank, map) : BOARD_OK;
     }
 
     if (valid2 != 0U) {
         *map = mram_store_block_map_copy;
-        (void)board_mram_write_block_map(MRAM_COPY_1, bank, map);
         *is_valid = 1U;
+        return board_mram_write_block_map(MRAM_COPY_1, bank, map);
     }
 
     return BOARD_OK;

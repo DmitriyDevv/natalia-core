@@ -32,6 +32,8 @@
 // default callback before clearing Ep stall - override in usb_app.c if needed (for MSC BOT)
  __attribute__ ((weak)) void USBclass_ClearEPStall(const struct usbdevice_ *usbd, uint8_t epaddr)
 {
+	(void)usbd;
+	(void)epaddr;
 }
 // App interface routines ================================================
 void USBdev_SetRxBuf(const struct usbdevice_ *usbd, uint8_t epn, uint8_t *buf)

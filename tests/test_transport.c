@@ -151,7 +151,7 @@ static void set_device_id_persists_to_mram(void) {
     make_fill_payload(payload);
     payload[0] = 0x42U;
     payload[1] = 0x00U; /* device_id = 0x0042 */
-    board_comm_stub_inject_rx(KU_SET_DEVICE_ID_MSG_ID, ADDR_BVS, ADDR_NA,
+    board_comm_stub_inject_rx(KU_SET_DEVICE_ID_MSG_ID, ADDR_BVS, 0x00AAU,
                               payload, SHORT_PAYLOAD_SIZE);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
@@ -188,7 +188,7 @@ static void set_device_id_in_shutdown_is_ram_only(void) {
     make_fill_payload(payload);
     payload[0] = 0x42U;
     payload[1] = 0x00U;
-    board_comm_stub_inject_rx(KU_SET_DEVICE_ID_MSG_ID, ADDR_BVS, ADDR_NA,
+    board_comm_stub_inject_rx(KU_SET_DEVICE_ID_MSG_ID, ADDR_BVS, 0x00AAU,
                               payload, SHORT_PAYLOAD_SIZE);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
@@ -225,7 +225,7 @@ static void stored_addresses_applied_on_load(void) {
     assert(action_load_mram(&ctx) == ACTION_OK);
 
     make_fill_payload(payload);
-    board_comm_stub_inject_rx(UNKNOWN_MSG_ID, ADDR_BVS, ADDR_NA,
+    board_comm_stub_inject_rx(UNKNOWN_MSG_ID, ADDR_BVS, 0x0071U,
                               payload, SHORT_PAYLOAD_SIZE);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);

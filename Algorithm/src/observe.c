@@ -15,7 +15,7 @@ static uint8_t observe_bank_id(NandBank bank) {
 static void observe_report_end(SystemContext *ctx, EventType type) {
     if (!ctx->observe.end_reported) {
         ctx->observe.end_reported = true;
-        (void)system_event_queue_push_back_type(type);
+        (void)system_event_queue_post_type(type);
     }
 }
 
@@ -63,7 +63,7 @@ static void observe_build_telemetry(SystemContext *ctx, NiTelemetry *telemetry) 
     uint32_t power_status = 0U;
     uint32_t ped_status = 0U;
 
-    transport_read_measurements(&measurements);
+    transport_read_measurements(ctx, &measurements);
     (void)board_read_power_status(&power_status);
 
     if (ctx->ped.is_powered && (board_ped_read_status(&ped_status) == BOARD_OK)) {
@@ -299,25 +299,6 @@ static void observe_start_session(SystemContext *ctx) {
     observe->stage = OBSERVE_STAGE_ACTIVE;
 }
 
-static void observe_collect_ped_faults(SystemContext *ctx) {
-    uint32_t faults = 0U;
-
-    if ((board_ped_take_faults(&faults) != BOARD_OK) || (faults == 0U)) {
-        return;
-    }
-
-    if ((faults & BOARD_PED_FAULT_POWER) != 0U) {
-        ctx->ped.is_powered = false;
-        alarm_raise(ctx, ALARM_PED_PS);
-    }
-    if ((faults & BOARD_PED_FAULT_READY) != 0U) {
-        alarm_raise(ctx, ALARM_PED_DIR);
-    }
-    if ((faults & BOARD_PED_FAULT_STATUS) != 0U) {
-        alarm_raise(ctx, ALARM_PED_ST);
-    }
-}
-
 static void observe_pump_writer(SystemContext *ctx) {
     ObserveContext *observe = &ctx->observe;
     NiWriterState state = ni_writer_poll(&observe->writer, &observe->stream);
@@ -392,7 +373,6 @@ void observe_poll(SystemContext *ctx) {
 
     case OBSERVE_STAGE_ACTIVE:
     case OBSERVE_STAGE_FINISHING:
-        observe_collect_ped_faults(ctx);
         for (step = 0U; step < (OBSERVE_RECORDS_PER_POLL / OBSERVE_RECORDS_PER_WRITER_POLL); ++step) {
             more = observe_pump_records(ctx, OBSERVE_RECORDS_PER_WRITER_POLL);
             observe_pump_writer(ctx);

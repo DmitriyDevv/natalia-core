@@ -27,7 +27,7 @@ option(NATALIA_USE_BOARD_STUBS
         "Use board_api stubs instead of real firmware implementation"
         ON)
 
-set(NATALIA_LOG_BACKEND "LPUART1" CACHE STRING
+set(NATALIA_LOG_BACKEND "NONE" CACHE STRING
         "Log output backend: NONE, LPUART1, USART2, FTDI or CAN"
 )
 set_property(CACHE NATALIA_LOG_BACKEND PROPERTY STRINGS NONE LPUART1 USART2 FTDI CAN)

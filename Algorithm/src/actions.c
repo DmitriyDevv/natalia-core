@@ -226,6 +226,11 @@ static ActionResult prepare_single_nand_bank(SystemContext* ctx, NandBank bank) 
     return ACTION_OK;
 }
 
+static ActionResult ped_fault(SystemContext* ctx, uint32_t bit) {
+    alarm_set(ctx, bit);
+    return ((ctx->alarm_mask & bit) != 0U) ? ACTION_ALARM : ACTION_OK;
+}
+
 static ActionResult confirm_ped_powered(SystemContext* ctx) {
     uint8_t is_powered = 0U;
     ActionResult result;
@@ -241,8 +246,7 @@ static ActionResult confirm_ped_powered(SystemContext* ctx) {
 
     if (is_powered == 0U) {
         ctx->ped.is_powered = false;
-        alarm_set(ctx, ALARM_PED_PS);
-        return ACTION_ALARM;
+        return ped_fault(ctx, ALARM_PED_PS);
     }
 
     ctx->ped.is_powered = true;
@@ -275,12 +279,40 @@ static void cleanup_failed_mode_start(SystemContext* ctx, NandBank bank, bool cl
     }
 }
 
-static uint32_t stored_packet_count(NandBank bank) {
+static ActionResult load_service_data(SystemContext* ctx, MramStoreServiceData* service_data) {
+    if (mram_store_load_service_data(service_data) != BOARD_OK) {
+        alarm_set(ctx, ALARM_MRAM);
+        return ACTION_ALARM;
+    }
+    return ACTION_OK;
+}
+
+static ActionResult save_service_data(SystemContext* ctx, const MramStoreServiceData* service_data) {
+    if (mram_store_save_service_data(service_data) != BOARD_OK) {
+        alarm_set(ctx, ALARM_MRAM);
+        return ACTION_ALARM;
+    }
+    return ACTION_OK;
+}
+
+static ActionResult map_result(SystemContext* ctx, BoardStatus status) {
+    if (status == BOARD_OK) {
+        return ACTION_OK;
+    }
+    alarm_set(ctx, nand_map_mram_failed() ? ALARM_MRAM : ALARM_NAND_PR);
+    return ACTION_ALARM;
+}
+
+static ActionResult stored_packet_count(SystemContext* ctx, NandBank bank, uint32_t* count) {
     MramStoreServiceData service_data = {0};
+    ActionResult result = load_service_data(ctx, &service_data);
 
-    (void)mram_store_load_service_data(&service_data);
+    if (result != ACTION_OK) {
+        return result;
+    }
 
-    return (bank == NAND_BANK_1) ? service_data.nand1_packet_count : service_data.nand2_packet_count;
+    *count = (bank == NAND_BANK_1) ? service_data.nand1_packet_count : service_data.nand2_packet_count;
+    return ACTION_OK;
 }
 
 static void reset_bank_progress(MramStoreServiceData* service_data, NandBank bank) {
@@ -295,6 +327,36 @@ static void reset_bank_progress(MramStoreServiceData* service_data, NandBank ban
     }
 }
 
+static ActionResult mark_bank_needs_erase(SystemContext* ctx, NandBank bank) {
+    MramStoreServiceData service_data = {0};
+    NandRuntimeState* nand = nand_state(ctx, bank);
+    ActionResult result = load_service_data(ctx, &service_data);
+
+    if (result != ACTION_OK) {
+        return result;
+    }
+
+    reset_bank_progress(&service_data, bank);
+    if (bank == NAND_BANK_1) {
+        service_data.nand1_full = 1U;
+    } else if (bank == NAND_BANK_2) {
+        service_data.nand2_full = 1U;
+    }
+
+    result = save_service_data(ctx, &service_data);
+    if ((result == ACTION_OK) && (nand != NULL)) {
+        nand->is_full = true;
+    }
+    return result;
+}
+
+static bool mram_is_blank(void) {
+    MramStoreStatus status = {0};
+
+    return (mram_store_check(&status) == BOARD_OK) &&
+           (status.copy1_valid == 0U) && (status.copy2_valid == 0U);
+}
+
 #define OBSERVE_PED_REG_TRIGGER   0x80U
 #define OBSERVE_PED_REG_THRESHOLD 0x81U
 
@@ -304,14 +366,12 @@ static ActionResult raise_ped_start_fault(SystemContext* ctx) {
     (void)board_ped_take_faults(&faults);
 
     if ((faults & BOARD_PED_FAULT_READY) != 0U) {
-        alarm_set(ctx, ALARM_PED_DIR);
-    } else if ((faults & BOARD_PED_FAULT_STATUS) != 0U) {
-        alarm_set(ctx, ALARM_PED_ST);
-    } else {
-        alarm_set(ctx, ALARM_PED_PS);
+        return ped_fault(ctx, ALARM_PED_DIR);
     }
-
-    return ACTION_ALARM;
+    if ((faults & BOARD_PED_FAULT_STATUS) != 0U) {
+        return ped_fault(ctx, ALARM_PED_ST);
+    }
+    return ped_fault(ctx, ALARM_PED_PS);
 }
 
 static ActionResult apply_observe_ped_config(SystemContext* ctx, bool power, bool sleep,
@@ -344,7 +404,10 @@ static ActionResult apply_observe_ped_config(SystemContext* ctx, bool power, boo
 
     if ((is_powered == 0U) && (board_ped_power_on() != BOARD_OK)) {
         ctx->ped.is_powered = false;
-        return raise_ped_start_fault(ctx);
+        result = raise_ped_start_fault(ctx);
+        if (result != ACTION_OK) {
+            return result;
+        }
     }
 
     result = confirm_ped_powered(ctx);
@@ -355,7 +418,10 @@ static ActionResult apply_observe_ped_config(SystemContext* ctx, bool power, boo
     if ((board_ped_write_register(OBSERVE_PED_REG_TRIGGER, trigger_config) != BOARD_OK) ||
         (board_ped_write_register(OBSERVE_PED_REG_THRESHOLD,
                                   (uint16_t)((observe_params >> 12U) & 0x000FU)) != BOARD_OK)) {
-        return raise_ped_start_fault(ctx);
+        result = raise_ped_start_fault(ctx);
+        if (result != ACTION_OK) {
+            return result;
+        }
     }
 
     result = require_ok(board_ped_set_sleep(sleep ? 1U : 0U));
@@ -393,7 +459,10 @@ static ActionResult release_observe_ped(SystemContext* ctx, bool power, bool sle
 
     if (!ctx->ped.is_powered) {
         if (board_ped_power_on() != BOARD_OK) {
-            return raise_ped_start_fault(ctx);
+            result = raise_ped_start_fault(ctx);
+            if (result != ACTION_OK) {
+                return result;
+            }
         }
 
         result = confirm_ped_powered(ctx);
@@ -408,6 +477,18 @@ static ActionResult release_observe_ped(SystemContext* ctx, bool power, bool sle
     }
 
     return result;
+}
+
+static void apply_initial_rtc_time(const MramStoreConfig* config) {
+    InstrumentTime time;
+
+    if (config->init_rtc_time_ms >= 1000U) {
+        return;
+    }
+
+    time.seconds = config->init_rtc_time;
+    time.milliseconds = config->init_rtc_time_ms;
+    (void)board_rtc_set_time(&time);
 }
 
 ActionResult action_init_hardware(void) {
@@ -433,10 +514,14 @@ ActionResult action_load_mram(SystemContext* ctx) {
     }
 
     ctx->alarm_mask = alarm_sanitize_mask(config.alarm_mask);
-    ctx->alarm_status = service_data.alarm_status & ALARM_ALL_MASK;
-    ctx->masked_alarm = ctx->alarm_status & ctx->alarm_mask;
+    ctx->alarm_status = 0U;
+    ctx->masked_alarm = 0U;
     ctx->can_control = config.can_control;
 
+    ctx->mcu_temp_min = config.mcu_pu_temp_min;
+    ctx->mcu_temp_max = config.mcu_pu_temp_max;
+    ctx->bd_temp_min = config.det_temp_min;
+    ctx->bd_temp_max = config.det_temp_max;
     ctx->pu_temp_min = config.pu_temp_min;
     ctx->pu_temp_max = config.pu_temp_max;
     ctx->ped_temp_min = config.ped_temp_min;
@@ -449,9 +534,12 @@ ActionResult action_load_mram(SystemContext* ctx) {
     ctx->ped_voltage_max = config.ped_voltage_max;
     ctx->ped_current_min = config.ped_current_min;
     ctx->ped_current_max = config.ped_current_max;
+    ctx->thresholds_loaded = true;
 
     transport_apply_stored_addresses(config.device_id, config.destination_id);
+    apply_initial_rtc_time(&config);
 
+    ctx->observe_session_id = service_data.observe_session_id;
     ctx->nand1.is_full = (service_data.nand1_full != 0U);
     ctx->nand2.is_full = (service_data.nand2_full != 0U);
     ctx->test.result_status = service_data.last_test_status;
@@ -467,13 +555,15 @@ ActionResult action_check_mram(SystemContext* ctx) {
         return ACTION_ERR_CONTENT;
     }
 
+    ctx->alarm_mask = alarm_sanitize_mask(ALARM_ALL_MASK);
+
     result = board_status_to_action(mram_store_check(&status));
     if (result != ACTION_OK) {
         return result;
     }
 
     if (!status.copy1_valid && !status.copy2_valid) {
-        ctx->alarm_status |= MRAM_STORE_ALARM_BOTH_COPIES_INVALID;
+        alarm_set(ctx, MRAM_STORE_ALARM_BOTH_COPIES_INVALID);
         return ACTION_ALARM;
     }
 
@@ -499,7 +589,6 @@ ActionResult action_mark_init_fail(SystemContext* ctx) {
         return ACTION_ERR_CONTENT;
     }
 
-    ctx->alarm_status |= ALARM_MRAM;
     return ACTION_OK;
 }
 
@@ -585,8 +674,14 @@ ActionResult action_send_ack_status(const SystemEvent *event,
     );
 }
 
-ActionResult action_send_telem(const SystemContext *ctx) {
-    return require_ok(transport_send_telemetry(ctx));
+ActionResult action_send_telem(SystemContext *ctx) {
+    BoardStatus status = transport_send_telemetry(ctx);
+
+    if (status == BOARD_ERR_CRC) {
+        alarm_raise(ctx, ALARM_MRAM);
+        return ACTION_OK;
+    }
+    return require_ok(status);
 }
 
 ActionResult action_send_version(void) {
@@ -612,6 +707,10 @@ ActionResult action_apply_config(SystemContext* ctx, const SystemEvent* event) {
     ctx->alarm_mask = alarm_sanitize_mask(cfg->alarm_mask);
     ctx->can_control = cfg->can_control;
 
+    ctx->mcu_temp_min = cfg->mcu_pu_temp_min;
+    ctx->mcu_temp_max = cfg->mcu_pu_temp_max;
+    ctx->bd_temp_min = cfg->det_temp_min;
+    ctx->bd_temp_max = cfg->det_temp_max;
     ctx->pu_temp_min = cfg->pu_temp_min;
     ctx->pu_temp_max = cfg->pu_temp_max;
     ctx->ped_temp_min = cfg->ped_temp_min;
@@ -624,6 +723,7 @@ ActionResult action_apply_config(SystemContext* ctx, const SystemEvent* event) {
     ctx->ped_voltage_max = cfg->ped_voltage_max;
     ctx->ped_current_min = cfg->ped_current_min;
     ctx->ped_current_max = cfg->ped_current_max;
+    ctx->thresholds_loaded = true;
 
     if ((cfg->write_control & (1U << 0U)) != 0U) {
         ctx->observe_session_id = cfg->observe_session_id;
@@ -632,11 +732,12 @@ ActionResult action_apply_config(SystemContext* ctx, const SystemEvent* event) {
     return ACTION_OK;
 }
 
-ActionResult action_write_mram(const SystemContext* ctx, const SystemEvent* event) {
+ActionResult action_write_mram(SystemContext* ctx, const SystemEvent* event) {
     MramStoreConfig config = {0};
     MramStoreServiceData service_data = {0};
     const CmdSetConfig* cfg;
     ActionResult result;
+    bool blank = false;
 
     if ((ctx == NULL) || (event == NULL)) {
         return ACTION_ERR_CONTENT;
@@ -644,7 +745,14 @@ ActionResult action_write_mram(const SystemContext* ctx, const SystemEvent* even
 
     cfg = &event->command.set_config;
 
-    (void)mram_store_load_config(&config);
+    if (mram_store_load_config(&config) != BOARD_OK) {
+        if (!mram_is_blank()) {
+            alarm_set(ctx, ALARM_MRAM);
+            return ACTION_ALARM;
+        }
+        blank = true;
+        (void)memset(&config, 0, sizeof(config));
+    }
 
     config.mcu_pu_temp_min = cfg->mcu_pu_temp_min;
     config.mcu_pu_temp_max = cfg->mcu_pu_temp_max;
@@ -671,16 +779,24 @@ ActionResult action_write_mram(const SystemContext* ctx, const SystemEvent* even
     config.can_control = cfg->can_control;
     config.alarm_mask = (uint16_t)(alarm_sanitize_mask(cfg->alarm_mask) & 0xFFFFU);
 
-    result = board_status_to_action(mram_store_save_config(&config));
-    if (result != ACTION_OK) {
-        return result;
+    if (mram_store_save_config(&config) != BOARD_OK) {
+        alarm_set(ctx, ALARM_MRAM);
+        return ACTION_ALARM;
     }
 
-    if ((cfg->write_control & 0x007FU) == 0U) {
+    if (!blank && ((cfg->write_control & 0x007FU) == 0U)) {
         return ACTION_OK;
     }
 
-    (void)mram_store_load_service_data(&service_data);
+    if (blank) {
+        service_data.nand1_full = 1U;
+        service_data.nand2_full = 1U;
+    } else {
+        result = load_service_data(ctx, &service_data);
+        if (result != ACTION_OK) {
+            return result;
+        }
+    }
 
     if ((cfg->write_control & (1U << 0U)) != 0U) {
         service_data.observe_session_id = cfg->observe_session_id;
@@ -704,7 +820,15 @@ ActionResult action_write_mram(const SystemContext* ctx, const SystemEvent* even
         service_data.nand2_test_count = cfg->nand2_test_count;
     }
 
-    return board_status_to_action(mram_store_save_service_data(&service_data));
+    result = save_service_data(ctx, &service_data);
+    if ((result == ACTION_OK) && blank) {
+        ctx->nand1.is_full = true;
+        ctx->nand2.is_full = true;
+        ctx->observe_session_id = service_data.observe_session_id;
+        ctx->test.result_status = 0U;
+        ctx->alarm_status &= ~(uint32_t)ALARM_MRAM;
+    }
+    return result;
 }
 
 ActionResult action_recalc_masked_alarm(SystemContext* ctx) {
@@ -761,7 +885,7 @@ ActionResult action_start_observe(SystemContext* ctx, const SystemEvent* event) 
     result = prepare_single_nand_bank(ctx, cmd->bank);
 
     if (result == ACTION_OK) {
-        result = require_ok(nand_map_load(bank_id(cmd->bank)));
+        result = map_result(ctx, nand_map_load(bank_id(cmd->bank)));
     }
 
     if (result == ACTION_OK) {
@@ -816,7 +940,14 @@ ActionResult action_start_erase(SystemContext* ctx, const SystemEvent* event) {
         return result;
     }
 
-    result = require_ok(nand_map_load(bank_id(bank)));
+    result = map_result(ctx, nand_map_load(bank_id(bank)));
+    if (result != ACTION_OK) {
+        ctx->erase.stage = ERASE_STAGE_FINISH_ALARM;
+        cleanup_failed_mode_start(ctx, bank, false);
+        return result;
+    }
+
+    result = mark_bank_needs_erase(ctx, bank);
     if (result != ACTION_OK) {
         ctx->erase.stage = ERASE_STAGE_FINISH_ALARM;
         cleanup_failed_mode_start(ctx, bank, false);
@@ -881,7 +1012,7 @@ ActionResult action_start_test(SystemContext* ctx, const SystemEvent* event) {
         return result;
     }
 
-    result = require_ok(nand_map_rebuild(bank_id(bank)));
+    result = map_result(ctx, nand_map_rebuild(bank_id(bank)));
     if (result != ACTION_OK) {
         ctx->test.stage = TEST_STAGE_FINISH_ALARM;
         cleanup_failed_mode_start(ctx, bank, false);
@@ -902,6 +1033,13 @@ ActionResult action_start_test(SystemContext* ctx, const SystemEvent* event) {
         if (ctx->test.total_blocks > TEST_MODE_BLOCK_COUNT) {
             ctx->test.total_blocks = TEST_MODE_BLOCK_COUNT;
         }
+    }
+
+    result = mark_bank_needs_erase(ctx, bank);
+    if (result != ACTION_OK) {
+        ctx->test.stage = TEST_STAGE_FINISH_ALARM;
+        cleanup_failed_mode_start(ctx, bank, false);
+        return result;
     }
 
     result = require_ok(board_nand_erase_start(bank_id(bank)));
@@ -1008,7 +1146,7 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
         return result;
     }
 
-    result = require_ok(nand_map_load(bank_id(bank)));
+    result = map_result(ctx, nand_map_load(bank_id(bank)));
     if (result != ACTION_OK) {
         ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
         cleanup_failed_mode_start(ctx, bank, false);
@@ -1016,7 +1154,13 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
     }
 
     if (event->command.dump.dump_all) {
-        packet_count = stored_packet_count(bank);
+        packet_count = 0U;
+        result = stored_packet_count(ctx, bank, &packet_count);
+        if (result != ACTION_OK) {
+            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+            cleanup_failed_mode_start(ctx, bank, false);
+            return result;
+        }
 
         if (packet_count == 0U) {
             ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
@@ -1089,15 +1233,16 @@ ActionResult action_start_shutdown(SystemContext* ctx) {
     ctx->shutdown.power_off_failed = false;
     ctx->shutdown.stage = SHUTDOWN_STAGE_STOP_ACTIVE;
 
-    (void)mram_store_load_service_data(&service_data);
+    result = load_service_data(ctx, &service_data);
+    if (result == ACTION_OK) {
+        service_data.alarm_status = (uint16_t)(ctx->alarm_status & 0xFFFFU);
+        service_data.nand1_full = ctx->nand1.is_full ? 1U : 0U;
+        service_data.nand2_full = ctx->nand2.is_full ? 1U : 0U;
+        service_data.last_test_status = ctx->test.result_status;
 
-    service_data.alarm_status = (uint16_t)(ctx->alarm_status & 0xFFFFU);
-    service_data.nand1_full = ctx->nand1.is_full ? 1U : 0U;
-    service_data.nand2_full = ctx->nand2.is_full ? 1U : 0U;
-    service_data.last_test_status = ctx->test.result_status;
-
-    ctx->shutdown.stage = SHUTDOWN_STAGE_SAVE_SERVICE_DATA;
-    result = board_status_to_action(mram_store_save_service_data(&service_data));
+        ctx->shutdown.stage = SHUTDOWN_STAGE_SAVE_SERVICE_DATA;
+        result = save_service_data(ctx, &service_data);
+    }
     if (result != ACTION_OK) {
         ctx->shutdown.service_data_save_failed = true;
         ctx->shutdown.stage = SHUTDOWN_STAGE_ERROR;
@@ -1226,31 +1371,40 @@ ActionResult action_clear_nand_full_flag(SystemContext* ctx) {
     return ACTION_OK;
 }
 
-ActionResult action_update_service_data(const SystemContext* ctx) {
+ActionResult action_update_service_data(SystemContext* ctx) {
     MramStoreServiceData service_data = {0};
+    ActionResult result;
 
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
     }
 
-    (void)mram_store_load_service_data(&service_data);
+    result = load_service_data(ctx, &service_data);
+    if (result != ACTION_OK) {
+        return result;
+    }
 
     service_data.alarm_status = (uint16_t)(ctx->alarm_status & 0xFFFFU);
     service_data.nand1_full = ctx->nand1.is_full ? 1U : 0U;
     service_data.nand2_full = ctx->nand2.is_full ? 1U : 0U;
     service_data.last_test_status = ctx->test.result_status;
-    return board_status_to_action(mram_store_save_service_data(&service_data));
+    return save_service_data(ctx, &service_data);
 }
 
-ActionResult action_update_erase_service_data(const SystemContext* ctx) {
+ActionResult action_update_erase_service_data(SystemContext* ctx) {
     MramStoreServiceData service_data = {0};
+    ActionResult result;
+    ActionResult map_status;
     uint16_t count;
 
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
     }
 
-    (void)mram_store_load_service_data(&service_data);
+    result = load_service_data(ctx, &service_data);
+    if (result != ACTION_OK) {
+        return result;
+    }
 
     service_data.alarm_status = (uint16_t)(ctx->alarm_status & 0xFFFFU);
     service_data.nand1_full = ctx->nand1.is_full ? 1U : 0U;
@@ -1258,7 +1412,7 @@ ActionResult action_update_erase_service_data(const SystemContext* ctx) {
     service_data.last_test_status = ctx->test.result_status;
 
     reset_bank_progress(&service_data, ctx->erase.bank);
-    (void)nand_map_save(bank_id(ctx->erase.bank));
+    map_status = map_result(ctx, nand_map_save(bank_id(ctx->erase.bank)));
 
     if (ctx->erase.bank == NAND_BANK_1) {
         count = service_data.nand1_erase_count;
@@ -1274,17 +1428,22 @@ ActionResult action_update_erase_service_data(const SystemContext* ctx) {
         service_data.nand2_erase_count = count;
     }
 
-    return board_status_to_action(mram_store_save_service_data(&service_data));
+    result = save_service_data(ctx, &service_data);
+    return (result != ACTION_OK) ? result : map_status;
 }
 
-ActionResult action_update_dump_service_data(const SystemContext* ctx) {
+ActionResult action_update_dump_service_data(SystemContext* ctx) {
     MramStoreServiceData service_data = {0};
+    ActionResult result;
 
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
     }
 
-    (void)mram_store_load_service_data(&service_data);
+    result = load_service_data(ctx, &service_data);
+    if (result != ACTION_OK) {
+        return result;
+    }
 
     service_data.alarm_status = (uint16_t)(ctx->alarm_status & 0xFFFFU);
     service_data.nand1_full = ctx->nand1.is_full ? 1U : 0U;
@@ -1297,28 +1456,41 @@ ActionResult action_update_dump_service_data(const SystemContext* ctx) {
         service_data.nand2_last_dumped_packet = ctx->dump.last_dumped_packet;
     }
 
-    return board_status_to_action(mram_store_save_service_data(&service_data));
+    return save_service_data(ctx, &service_data);
 }
 
-ActionResult action_update_test_service_data(const SystemContext* ctx) {
+ActionResult action_update_test_service_data(SystemContext* ctx) {
     MramStoreServiceData service_data = {0};
+    NandRuntimeState* nand;
+    ActionResult result;
+    ActionResult map_status;
     uint16_t count;
+    bool bank_clean;
 
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
     }
 
-    (void)mram_store_load_service_data(&service_data);
+    result = load_service_data(ctx, &service_data);
+    if (result != ACTION_OK) {
+        return result;
+    }
+
+    bank_clean = !ctx->test.operation_failed && !ctx->test.finish_requested;
+    nand = nand_state(ctx, ctx->test.bank);
+    if (bank_clean && (nand != NULL)) {
+        nand->is_full = false;
+    }
 
     service_data.alarm_status = (uint16_t)(ctx->alarm_status & 0xFFFFU);
     service_data.nand1_full = ctx->nand1.is_full ? 1U : 0U;
     service_data.nand2_full = ctx->nand2.is_full ? 1U : 0U;
     service_data.last_test_status = ctx->test.result_status;
 
-    if (ctx->test.final_erase && !ctx->test.operation_failed) {
+    if (bank_clean) {
         reset_bank_progress(&service_data, ctx->test.bank);
     }
-    (void)nand_map_save(bank_id(ctx->test.bank));
+    map_status = map_result(ctx, nand_map_save(bank_id(ctx->test.bank)));
 
     if (ctx->test.bank == NAND_BANK_1) {
         count = service_data.nand1_test_count;
@@ -1334,7 +1506,8 @@ ActionResult action_update_test_service_data(const SystemContext* ctx) {
         service_data.nand2_test_count = count;
     }
 
-    return board_status_to_action(mram_store_save_service_data(&service_data));
+    result = save_service_data(ctx, &service_data);
+    return (result != ACTION_OK) ? result : map_status;
 }
 
 ActionResult action_finish_test(SystemContext* ctx, const SystemEvent* event) {
@@ -1659,6 +1832,9 @@ ActionResult action_clear_alarm_status(SystemContext* ctx) {
         return ACTION_ERR_CONTENT;
     }
     ctx->alarm_status = 0U;
+    if (mram_is_blank()) {
+        alarm_set(ctx, ALARM_MRAM);
+    }
     return ACTION_OK;
 }
 

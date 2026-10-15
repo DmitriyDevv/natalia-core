@@ -38,7 +38,7 @@ void alarm_raise(SystemContext *ctx, uint32_t bit) {
     ctx->masked_alarm = ctx->alarm_status & ctx->alarm_mask;
 
     if ((previous == 0U) && (ctx->masked_alarm != 0U)) {
-        (void)system_event_queue_push_back_type(EVENT_MASKED_ALARM_SET);
+        (void)system_event_queue_post_type(EVENT_MASKED_ALARM_SET);
     }
 }
 
@@ -48,11 +48,19 @@ static bool alarm_monitor_mode(SystemState state) {
         (state == STATE_DUMP) || (state == STATE_ALARM);
 }
 
+static void check_temp_range(SystemContext *ctx, int32_t milli_c,
+                             int16_t min_deci, int16_t max_deci, uint32_t bit) {
+    int32_t min_milli = (int32_t)min_deci * ALARM_MONITOR_TEMP_DECI_TO_MILLI;
+    int32_t max_milli = (int32_t)max_deci * ALARM_MONITOR_TEMP_DECI_TO_MILLI;
+
+    if ((milli_c < min_milli) || (milli_c > max_milli)) {
+        alarm_raise(ctx, bit);
+    }
+}
+
 static void check_digital_temp(SystemContext *ctx, BoardTempSensorId sensor,
                                int16_t min_deci, int16_t max_deci, uint32_t bit) {
     BoardDigitalTempSample sample;
-    int32_t min_milli;
-    int32_t max_milli;
 
     if (board_read_digital_temp(sensor, &sample) != BOARD_OK) {
         return;
@@ -61,12 +69,21 @@ static void check_digital_temp(SystemContext *ctx, BoardTempSensorId sensor,
         return;
     }
 
-    min_milli = (int32_t)min_deci * ALARM_MONITOR_TEMP_DECI_TO_MILLI;
-    max_milli = (int32_t)max_deci * ALARM_MONITOR_TEMP_DECI_TO_MILLI;
+    check_temp_range(ctx, sample.temperature_milli_c, min_deci, max_deci, bit);
+}
 
-    if ((sample.temperature_milli_c < min_milli) ||
-        (sample.temperature_milli_c > max_milli)) {
-        alarm_raise(ctx, bit);
+static void check_analog_temps(SystemContext *ctx) {
+    BoardAnalogTemps temps;
+
+    if (board_read_analog_temps(&temps) != BOARD_OK) {
+        return;
+    }
+
+    if (temps.mcu_valid != 0U) {
+        check_temp_range(ctx, temps.mcu_milli_c, ctx->mcu_temp_min, ctx->mcu_temp_max, ALARM_MC_TEMP);
+    }
+    if (temps.bd_valid != 0U) {
+        check_temp_range(ctx, temps.bd_milli_c, ctx->bd_temp_min, ctx->bd_temp_max, ALARM_BD_TEMP);
     }
 }
 
@@ -128,6 +145,23 @@ static void check_nand_power_state(SystemContext *ctx,
     }
 }
 
+static void check_thresholds(SystemContext *ctx) {
+    check_analog_temps(ctx);
+    check_digital_temp(ctx, BOARD_TEMP_SENSOR_PU,
+                       ctx->pu_temp_min, ctx->pu_temp_max, ALARM_PU_TEMP);
+    check_power(ctx, BOARD_POWER_MONITOR_PU,
+                ctx->pu_voltage_min, ctx->pu_voltage_max, ALARM_PU_VOLT,
+                ctx->pu_current_min, ctx->pu_current_max, ALARM_PU_CURR);
+
+    if (ctx->ped.is_powered) {
+        check_digital_temp(ctx, BOARD_TEMP_SENSOR_PED,
+                           ctx->ped_temp_min, ctx->ped_temp_max, ALARM_PED_TEMP);
+        check_power(ctx, BOARD_POWER_MONITOR_PED,
+                    ctx->ped_voltage_min, ctx->ped_voltage_max, ALARM_PED_VOLT,
+                    ctx->ped_current_min, ctx->ped_current_max, ALARM_PED_CURR);
+    }
+}
+
 void alarm_monitor_poll(SystemContext *ctx, uint32_t now_ms) {
     if (ctx == NULL) {
         return;
@@ -140,17 +174,9 @@ void alarm_monitor_poll(SystemContext *ctx, uint32_t now_ms) {
     }
     ctx->alarm_monitor_last_ms = now_ms;
 
-    check_digital_temp(ctx, BOARD_TEMP_SENSOR_PU,
-                       ctx->pu_temp_min, ctx->pu_temp_max, ALARM_PU_TEMP);
-    check_digital_temp(ctx, BOARD_TEMP_SENSOR_PED,
-                       ctx->ped_temp_min, ctx->ped_temp_max, ALARM_PED_TEMP);
-
-    check_power(ctx, BOARD_POWER_MONITOR_PU,
-                ctx->pu_voltage_min, ctx->pu_voltage_max, ALARM_PU_VOLT,
-                ctx->pu_current_min, ctx->pu_current_max, ALARM_PU_CURR);
-    check_power(ctx, BOARD_POWER_MONITOR_PED,
-                ctx->ped_voltage_min, ctx->ped_voltage_max, ALARM_PED_VOLT,
-                ctx->ped_current_min, ctx->ped_current_max, ALARM_PED_CURR);
+    if (ctx->thresholds_loaded) {
+        check_thresholds(ctx);
+    }
 
     check_ped_power_state(ctx);
     check_nand_power_state(ctx, &ctx->nand1);

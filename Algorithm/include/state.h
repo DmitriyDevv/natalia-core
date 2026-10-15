@@ -383,10 +383,14 @@ typedef struct {
     uint16_t observe_session_id;
     uint16_t can_control;
 
+    int16_t mcu_temp_min;
+    int16_t mcu_temp_max;
     int16_t pu_temp_min;
     int16_t pu_temp_max;
     int16_t ped_temp_min;
     int16_t ped_temp_max;
+    int16_t bd_temp_min;
+    int16_t bd_temp_max;
     uint16_t pu_voltage_min;
     uint16_t pu_voltage_max;
     uint16_t pu_current_min;
@@ -395,6 +399,7 @@ typedef struct {
     uint16_t ped_voltage_max;
     uint16_t ped_current_min;
     uint16_t ped_current_max;
+    bool thresholds_loaded;
     uint32_t alarm_monitor_last_ms;
 
     NandRuntimeState nand1;

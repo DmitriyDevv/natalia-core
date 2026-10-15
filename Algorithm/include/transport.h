@@ -37,7 +37,7 @@ typedef struct {
     uint16_t ped_current;
 } TransportMeasurements;
 
-void transport_read_measurements(TransportMeasurements *measurements);
+void transport_read_measurements(const SystemContext *ctx, TransportMeasurements *measurements);
 BoardStatus transport_send_telemetry(const SystemContext *ctx);
 BoardStatus transport_send_version(void);
 BoardStatus transport_send_test_result(const uint8_t *data, uint16_t length);

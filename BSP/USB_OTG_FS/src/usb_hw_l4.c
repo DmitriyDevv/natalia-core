@@ -155,7 +155,7 @@ static uint16_t USBhw_GetInEPSize(const struct usbdevice_ *usbd, uint8_t epn)
 {
 	USB_OTG_TypeDef *usb = (USB_OTG_TypeDef *)usbd->usb;
 	uint32_t inepsize = usb->InEP[epn].DIEPCTL & USB_OTG_DIEPCTL_MPSIZ_Msk;
-	return epn ? inepsize : 64 >> (inepsize & 3);	// EP size = 8
+	return (uint16_t)(epn ? inepsize : (64UL >> (inepsize & 3UL)));	// EP size = 8
 }
 
 // not exactly correct rework needed
@@ -281,6 +281,7 @@ static void USBhw_Reset(const struct usbdevice_ *usbd)
 
 static void USBhw_EnumDone(const struct usbdevice_ *usbd)
 {
+	(void)usbd;
 //	USB_OTG_TypeDef *usb = (USB_OTG_TypeDef *)usbd->usb;
 //	USB_OTG_GlobalTypeDef *usbg = (USB_OTG_GlobalTypeDef *)usbd->usb;
 //	USB_OTG_INEndpointTypeDef *InEP = usb->InEP;
@@ -312,7 +313,7 @@ static void USBhw_SetCfg(const struct usbdevice_ *usbd)
     	const struct USBdesc_ep_ *inepdesc = USBdev_GetEPDescriptor(usbd, i | EP_IS_IN);
 		uint16_t txsize = inepdesc ? getusb16(&inepdesc->wMaxPacketSize) : 0;
 		// convert endpoint size to endpoint buffer size in 32-bit words
-		uint16_t fifosize = (txsize + 3) / 4;
+		uint16_t fifosize = (uint16_t)((txsize + 3U) / 4U);
 		if (fifosize < 16)
 			fifosize = 16;
 		if (txsize)	// in bytes
@@ -402,7 +403,7 @@ static void USBhw_StartTx(const struct usbdevice_ *usbd, uint8_t epn)
 	//uint16_t bcount = epn ? epd->count : MIN(epd->count, epsize);
 	//uint16_t npackets = (bcount + epsize - 1) / epsize;
 	USB_OTG_INEndpointTypeDef *inep = &usb->InEP[epn];
-	if (~inep->DIEPCTL & USB_OTG_DIEPCTL_EPENA && inep->DTXFSTS >= (bcount + 3) / 4)
+	if (~inep->DIEPCTL & USB_OTG_DIEPCTL_EPENA && inep->DTXFSTS >= (((uint32_t)bcount + 3UL) / 4UL))
 	{
 	    if (epn == 0)
 	    {
@@ -477,7 +478,7 @@ static void USBhw_ReadRxData(const struct usbdevice_ *usbd, uint8_t epn, uint16_
 					*dest++ = (data >> 16) & 0xff;
 					if (--bcount)
 					{
-						*dest++ = data >> 24;
+						*dest++ = (uint8_t)(data >> 24);
 						--bcount;
 					}
 				}
@@ -487,7 +488,7 @@ static void USBhw_ReadRxData(const struct usbdevice_ *usbd, uint8_t epn, uint16_
 	else
 	{
 		// just empty the fifo
-		uint32_t wcount = (bcount + 3) / 4;
+		uint32_t wcount = ((uint32_t)bcount + 3UL) / 4UL;
 		while (wcount--)
 			*fifo;
 	}
@@ -552,7 +553,7 @@ static void USBhw_IRQHandler(const struct usbdevice_ *usbd)
     }
     if (gintsts & USB_OTG_GINTSTS_OEPINT)	// Out EP traffic interrupt
 	{
-    	uint16_t oepint = usb->Device.DAINT >> USB_OTG_DAINTMSK_OEPM_Pos;
+    	uint16_t oepint = (uint16_t)(usb->Device.DAINT >> USB_OTG_DAINTMSK_OEPM_Pos);
 
     	for (uint8_t epn = 0; epn < usbd->cfg->numeppairs; epn++)
     		if (oepint >> epn & 1)
@@ -614,7 +615,7 @@ static void USBhw_IRQHandler(const struct usbdevice_ *usbd)
 	}
     if (gintsts & USB_OTG_GINTSTS_IEPINT)	// In EP traffic interrupt
 	{
-    	uint16_t iepint = usb->Device.DAINT;
+    	uint16_t iepint = (uint16_t)usb->Device.DAINT;
 
     	for (uint8_t epn = 0; iepint && epn < usbd->cfg->numeppairs; epn++, iepint >>= 1)
     		if (iepint & 1)
