@@ -95,6 +95,12 @@ static void ped_reg_set_pin_analog(GPIO_TypeDef* gpio, uint32_t pin_index) {
     gpio->MODER |= 3UL << (pin_index * 2UL);
 }
 
+static void ped_reg_connect_rtc_out(void) {
+    GPIOB->AFR[0] &= ~GPIO_AFRL_AFSEL2;
+    GPIOB->MODER &= ~GPIO_MODER_MODE2;
+    GPIOB->MODER |= 2UL << GPIO_MODER_MODE2_Pos;
+}
+
 static void ped_reg_configure_bus_safe(void) {
     GPIOD->MODER = 0xFFFFFFFFUL;
     GPIOF->MODER = 0xFFFFFFFFUL;
@@ -350,7 +356,8 @@ static void ped_reg_on_second(void) {
 }
 
 BoardStatus ped_reg_init(void) {
-    RCC->AHB2ENR |= RCC_AHB2ENR_GPIODEN |
+    RCC->AHB2ENR |= RCC_AHB2ENR_GPIOBEN |
+        RCC_AHB2ENR_GPIODEN |
         RCC_AHB2ENR_GPIOEEN |
         RCC_AHB2ENR_GPIOFEN |
         RCC_AHB2ENR_GPIOGEN;
@@ -369,6 +376,7 @@ BoardStatus ped_reg_init(void) {
     ped_reg_ring_reset(&ped_reg_ring);
 
     ped_reg_configure_bus_safe();
+    ped_reg_set_pin_analog(GPIOB, 2UL);
     ped_reg_configure_power_control();
     ped_reg_configure_monitor_inputs();
     ped_reg_configure_exti();
@@ -391,6 +399,7 @@ BoardStatus ped_reg_power_on(void) {
     uint16_t status_h;
 
     ped_reg_power_on_report = (PedRegPowerOnReport){PED_REG_POWER_ON_NOT_RUN, 0U, 0U, 0U, 0U};
+    ped_reg_configure_monitor_inputs();
     ped_reg_power_on_report.pson_before = ped_reg_power_good() ? 1U : 0U;
 
     if (ped_reg_power_on_report.pson_before != 0U) {
@@ -451,6 +460,8 @@ BoardStatus ped_reg_power_on(void) {
     GPIOE->BSRR = (PED_REG_TGRES_PIN | PED_REG_INHIBIT_PIN |
         PED_REG_SLEEP_PIN) << 16U;
 
+    ped_reg_connect_rtc_out();
+
     ped_reg_power_expected = 1U;
     ped_reg_bus_active = 1U;
 
@@ -462,6 +473,7 @@ static void ped_reg_release_bus(void) {
     ped_reg_events_enabled = 0U;
     ped_reg_event_held = 0U;
     ped_reg_configure_bus_safe();
+    ped_reg_set_pin_analog(GPIOB, 2UL);
 }
 
 BoardStatus ped_reg_power_off(void) {

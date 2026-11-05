@@ -35,7 +35,6 @@
 #define FTDI_PS_OFF_LEVEL     GPIO_LEVEL_LOW
 #define FTDI_PSON_READY_LEVEL GPIO_LEVEL_HIGH
 #define FTDI_RES_ACTIVE_LEVEL GPIO_LEVEL_LOW
-#define FTDI_RES_RUN_LEVEL    GPIO_LEVEL_HIGH
 #define FTDI_RESET_PULSE_MS   (200UL)
 #define FTDI_PSON_TIMEOUT_MS  (400UL)
 
@@ -103,6 +102,22 @@ static void ftdi_release_inflight(void) {
     ftdi_tx_inflight = 0U;
 }
 
+static const GpioConfig ftdi_res_active_config = {
+    .mode = GPIO_MODE_OUTPUT,
+    .pull = GPIO_PULL_NONE,
+    .output_type = GPIO_OUTPUT_PUSH_PULL,
+    .speed = GPIO_SPEED_LOW,
+    .initial_level = FTDI_RES_ACTIVE_LEVEL
+};
+
+static const GpioConfig ftdi_res_released_config = {
+    .mode = GPIO_MODE_INPUT,
+    .pull = GPIO_PULL_NONE,
+    .output_type = GPIO_OUTPUT_PUSH_PULL,
+    .speed = GPIO_SPEED_LOW,
+    .initial_level = FTDI_RES_ACTIVE_LEVEL
+};
+
 static BoardStatus ftdi_configure_control_pins(void) {
     static const GpioConfig ps_config = {
         .mode = GPIO_MODE_OUTPUT,
@@ -110,14 +125,6 @@ static BoardStatus ftdi_configure_control_pins(void) {
         .output_type = GPIO_OUTPUT_PUSH_PULL,
         .speed = GPIO_SPEED_LOW,
         .initial_level = GPIO_LEVEL_LOW
-    };
-
-    static const GpioConfig res_config = {
-        .mode = GPIO_MODE_OUTPUT,
-        .pull = GPIO_PULL_NONE,
-        .output_type = GPIO_OUTPUT_PUSH_PULL,
-        .speed = GPIO_SPEED_LOW,
-        .initial_level = FTDI_RES_ACTIVE_LEVEL
     };
 
     static const GpioConfig pson_config = {
@@ -135,7 +142,7 @@ static BoardStatus ftdi_configure_control_pins(void) {
         return status;
     }
 
-    status = gpio_configure(BOARD_PIN_PU_FTDI_RES, &res_config);
+    status = gpio_configure(BOARD_PIN_PU_FTDI_RES, &ftdi_res_active_config);
     if (status != BOARD_OK) {
         return status;
     }
@@ -174,7 +181,7 @@ static BoardStatus ftdi_power_up(void) {
 
     timebase_delay_ms_blocking(FTDI_RESET_PULSE_MS);
 
-    return gpio_write(BOARD_PIN_PU_FTDI_RES, FTDI_RES_RUN_LEVEL);
+    return gpio_configure(BOARD_PIN_PU_FTDI_RES, &ftdi_res_released_config);
 }
 
 static BoardStatus ftdi_configure_usart_clock(void) {
@@ -338,7 +345,7 @@ BoardStatus ftdi_deinit(void) {
     (void)gpio_set_disconnected(BOARD_PIN_USART1_CTS);
     (void)gpio_set_disconnected(BOARD_PIN_USART1_RTS);
 
-    (void)gpio_write(BOARD_PIN_PU_FTDI_RES, FTDI_RES_ACTIVE_LEVEL);
+    (void)gpio_configure(BOARD_PIN_PU_FTDI_RES, &ftdi_res_active_config);
     (void)gpio_write(BOARD_PIN_PU_FTDI_PS, FTDI_PS_OFF_LEVEL);
 
     ftdi_tx_head = 0U;

@@ -5,6 +5,7 @@
 #include "crc16.h"
 
 #include "board_startup_io.h"
+#include "log_backend.h"
 #include "gpio.h"
 #include "rtc.h"
 #include "timebase.h"
@@ -217,7 +218,7 @@ BoardStatus board_init_hardware(void) {
 }
 
 BoardStatus board_enter_safe_config(void) {
-    BoardStatus status;
+    BoardStatus status = BOARD_OK;
 
 #if defined(NATALIA_ENABLE_USB_DEVICE_DRIVER) && \
 (NATALIA_ENABLE_USB_DEVICE_DRIVER != 0) && \
@@ -226,7 +227,11 @@ BoardStatus board_enter_safe_config(void) {
     (void)usb_cdc_deinit();
 #endif
 
-    status = board_startup_io_init();
+#if defined(NATALIA_ENABLE_FTDI_DRIVER) && (NATALIA_ENABLE_FTDI_DRIVER != 0) && \
+    (NATALIA_LOG_BACKEND != NATALIA_LOG_BACKEND_FTDI)
+    (void)gpio_falling_edge_irq_disable(BOARD_PIN_PU_USB_VBUS);
+    (void)ftdi_deinit();
+#endif
 
 #if defined(NATALIA_ENABLE_MRAM_DRIVER) && (NATALIA_ENABLE_MRAM_DRIVER != 0)
     if (status == BOARD_OK) {
@@ -2868,7 +2873,7 @@ BoardStatus board_read_power_status(uint32_t* power_status) {
         return status;
     }
 
-    status = board_status_read_output_bit(power_status, BOARD_PIN_PU_FTDI_RES, 12U);
+    status = board_status_read_input_bit(power_status, BOARD_PIN_PU_FTDI_RES, 12U);
     if (status != BOARD_OK) {
         return status;
     }
