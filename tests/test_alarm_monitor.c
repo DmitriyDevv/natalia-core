@@ -8,18 +8,18 @@
 #include "event_queue.h"
 #include "state.h"
 
-/* Thresholds are stored in ctx in wire units (temp deci-degC, voltage mV,
+/* Thresholds are stored in ctx in wire units (temp 0.01 degC, voltage mV,
  * current mA); the monitor converts to Board_API native units. These are wide
  * enough that the default in-range stub readings pass. */
 static void set_wide_thresholds(SystemContext *ctx) {
-    ctx->mcu_temp_min = -400;
-    ctx->mcu_temp_max = 850;
-    ctx->bd_temp_min = -400;
-    ctx->bd_temp_max = 850;
-    ctx->pu_temp_min = -400;
-    ctx->pu_temp_max = 850;
-    ctx->ped_temp_min = -400;
-    ctx->ped_temp_max = 850;
+    ctx->mcu_temp_min = -4000;
+    ctx->mcu_temp_max = 8500;
+    ctx->bd_temp_min = -4000;
+    ctx->bd_temp_max = 8500;
+    ctx->pu_temp_min = -4000;
+    ctx->pu_temp_max = 8500;
+    ctx->ped_temp_min = -4000;
+    ctx->ped_temp_max = 8500;
     ctx->pu_voltage_min = 0U;
     ctx->pu_voltage_max = 60000U;
     ctx->ped_voltage_min = 0U;

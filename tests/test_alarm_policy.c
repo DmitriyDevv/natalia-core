@@ -205,12 +205,12 @@ static void blank_mram_waits_for_set_cfg(void) {
     assert(ctx.alarm_status == ALARM_MRAM);
 
     event = make_event(EVENT_CMD_SET_CFG);
-    event.command.set_config.mcu_pu_temp_min = -400;
-    event.command.set_config.mcu_pu_temp_max = 850;
-    event.command.set_config.det_temp_min = -400;
-    event.command.set_config.det_temp_max = 850;
-    event.command.set_config.pu_temp_min = -400;
-    event.command.set_config.pu_temp_max = 850;
+    event.command.set_config.mcu_pu_temp_min = -4000;
+    event.command.set_config.mcu_pu_temp_max = 8500;
+    event.command.set_config.det_temp_min = -4000;
+    event.command.set_config.det_temp_max = 8500;
+    event.command.set_config.pu_temp_min = -4000;
+    event.command.set_config.pu_temp_max = 8500;
     event.command.set_config.pu_voltage_max = 6000U;
     event.command.set_config.pu_current_max = 1000U;
     event.command.set_config.alarm_mask = (uint16_t)(ALARM_ALL_MASK & 0xFFFFU);
@@ -221,12 +221,12 @@ static void blank_mram_waits_for_set_cfg(void) {
     alarm_monitor_poll(&ctx, 60000U);
     assert(ctx.alarm_status == 0U);
     assert(ctx.alarm_status == 0U);
-    assert(ctx.pu_temp_max == 850);
+    assert(ctx.pu_temp_max == 8500);
     assert(ctx.nand1.is_full && ctx.nand2.is_full);
 
     memset(&config, 0, sizeof(config));
     assert(mram_store_load_config(&config) == BOARD_OK);
-    assert(config.pu_temp_max == 850);
+    assert(config.pu_temp_max == 8500);
     memset(&service, 0xFF, sizeof(service));
     assert(mram_store_load_service_data(&service) == BOARD_OK);
     assert(service.nand1_full == 1U && service.nand2_full == 1U);
@@ -244,7 +244,7 @@ static void telemetry_with_unreadable_mram_raises_mram(void) {
     uint16_t length = 0U;
 
     begin_test(&ctx, STATE_DUTY, ALARM_ALL_MASK);
-    ctx.pu_temp_max = 850;
+    ctx.pu_temp_max = 8500;
     board_stub_set_mram_crc_valid(1U, false);
     board_stub_set_mram_crc_valid(2U, false);
 
@@ -252,7 +252,7 @@ static void telemetry_with_unreadable_mram_raises_mram(void) {
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
     assert(board_comm_stub_last_tx(&message_id, &address_to, got, sizeof(got), &length));
     assert(length == sizeof(got));
-    assert(((uint16_t)got[42] | ((uint16_t)got[43] << 8)) == 850U);
+    assert(((uint16_t)got[42] | ((uint16_t)got[43] << 8)) == 8500U);
 
     assert((ctx.masked_alarm & ALARM_MRAM) != 0U);
     assert(system_event_queue_get_count() == 1U);

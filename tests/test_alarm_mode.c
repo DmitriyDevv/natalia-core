@@ -70,8 +70,8 @@ static SystemEvent set_cfg(uint16_t alarm_mask) {
     SystemEvent event = command(EVENT_CMD_SET_CFG, KU_SET_CFG_ID);
 
     event.command.set_config.alarm_mask = alarm_mask;
-    event.command.set_config.mcu_pu_temp_min = -400;
-    event.command.set_config.mcu_pu_temp_max = 850;
+    event.command.set_config.mcu_pu_temp_min = -4000;
+    event.command.set_config.mcu_pu_temp_max = 8500;
     return event;
 }
 

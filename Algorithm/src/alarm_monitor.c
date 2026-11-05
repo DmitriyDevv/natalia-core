@@ -8,14 +8,8 @@
 
 #define ALARM_MONITOR_PERIOD_MS (20000U)
 
-/*
- * Wire-unit -> Board_API native-unit conversion factors.
- *   temperature threshold assumed deci-degC, Board_API is milli-degC;
- *   current threshold assumed mA, Board_API is uA;
- *   voltage threshold assumed mV, matching Board_API (no conversion).
- */
-#define ALARM_MONITOR_TEMP_DECI_TO_MILLI (100)
-#define ALARM_MONITOR_CURR_MA_TO_UA      (1000)
+#define ALARM_MONITOR_TEMP_CENTI_TO_MILLI (10)
+#define ALARM_MONITOR_CURR_MA_TO_UA       (1000)
 
 void alarm_set(SystemContext *ctx, uint32_t bit) {
     if (ctx == NULL) {
@@ -49,9 +43,9 @@ static bool alarm_monitor_mode(SystemState state) {
 }
 
 static void check_temp_range(SystemContext *ctx, int32_t milli_c,
-                             int16_t min_deci, int16_t max_deci, uint32_t bit) {
-    int32_t min_milli = (int32_t)min_deci * ALARM_MONITOR_TEMP_DECI_TO_MILLI;
-    int32_t max_milli = (int32_t)max_deci * ALARM_MONITOR_TEMP_DECI_TO_MILLI;
+                             int16_t min_centi, int16_t max_centi, uint32_t bit) {
+    int32_t min_milli = (int32_t)min_centi * ALARM_MONITOR_TEMP_CENTI_TO_MILLI;
+    int32_t max_milli = (int32_t)max_centi * ALARM_MONITOR_TEMP_CENTI_TO_MILLI;
 
     if ((milli_c < min_milli) || (milli_c > max_milli)) {
         alarm_raise(ctx, bit);
@@ -59,7 +53,7 @@ static void check_temp_range(SystemContext *ctx, int32_t milli_c,
 }
 
 static void check_digital_temp(SystemContext *ctx, BoardTempSensorId sensor,
-                               int16_t min_deci, int16_t max_deci, uint32_t bit) {
+                               int16_t min_centi, int16_t max_centi, uint32_t bit) {
     BoardDigitalTempSample sample;
 
     if (board_read_digital_temp(sensor, &sample) != BOARD_OK) {
@@ -69,7 +63,7 @@ static void check_digital_temp(SystemContext *ctx, BoardTempSensorId sensor,
         return;
     }
 
-    check_temp_range(ctx, sample.temperature_milli_c, min_deci, max_deci, bit);
+    check_temp_range(ctx, sample.temperature_milli_c, min_centi, max_centi, bit);
 }
 
 static void check_analog_temps(SystemContext *ctx) {

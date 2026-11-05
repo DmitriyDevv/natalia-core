@@ -219,7 +219,7 @@ static void ped_fields_zero_while_ped_off(void) {
     assert(transport_send_telemetry(&ctx) == BOARD_OK);
     flush(&ctx);
     read_telemetry(frame);
-    assert(frame[10] == (uint8_t)(300U & 0xFFU));
+    assert((frame[10] | ((uint16_t)frame[11] << 8U)) == 3000U);
     assert((frame[18] | ((uint16_t)frame[19] << 8U)) == 5000U);
     assert((frame[20] | ((uint16_t)frame[21] << 8U)) == 200U);
 }

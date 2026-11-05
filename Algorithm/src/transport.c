@@ -324,14 +324,14 @@ static void transport_write_le_u32(uint8_t* data, uint32_t value) {
     data[3] = (uint8_t)((value >> 24U) & 0xFFU);
 }
 
-static uint16_t transport_temp_milli_to_deci(int32_t milli_c) {
-    int32_t deci = milli_c / 100;
-    if (deci > 32767) {
-        deci = 32767;
-    } else if (deci < -32768) {
-        deci = -32768;
+static uint16_t transport_temp_milli_to_centi(int32_t milli_c) {
+    int32_t centi = milli_c / 10;
+    if (centi > 32767) {
+        centi = 32767;
+    } else if (centi < -32768) {
+        centi = -32768;
     }
-    return (uint16_t)(int16_t)deci;
+    return (uint16_t)(int16_t)centi;
 }
 
 static uint16_t transport_current_ua_to_ma(int32_t current_ua) {
@@ -568,18 +568,18 @@ void transport_read_measurements(const SystemContext* ctx, TransportMeasurements
 
     if (board_read_analog_temps(&analog_temps) == BOARD_OK) {
         if (analog_temps.mcu_valid != 0U) {
-            measurements->mc_temp = transport_temp_milli_to_deci(analog_temps.mcu_milli_c);
+            measurements->mc_temp = transport_temp_milli_to_centi(analog_temps.mcu_milli_c);
         }
         if (analog_temps.bd_valid != 0U) {
-            measurements->bd_temp = transport_temp_milli_to_deci(analog_temps.bd_milli_c);
+            measurements->bd_temp = transport_temp_milli_to_centi(analog_temps.bd_milli_c);
         }
     }
     if (board_read_digital_temp(BOARD_TEMP_SENSOR_PU, &pu_temp) == BOARD_OK) {
-        measurements->pu_temp = transport_temp_milli_to_deci(pu_temp.temperature_milli_c);
+        measurements->pu_temp = transport_temp_milli_to_centi(pu_temp.temperature_milli_c);
     }
     if (ctx->ped.is_powered &&
         (board_read_digital_temp(BOARD_TEMP_SENSOR_PED, &ped_temp) == BOARD_OK)) {
-        measurements->ped_temp = transport_temp_milli_to_deci(ped_temp.temperature_milli_c);
+        measurements->ped_temp = transport_temp_milli_to_centi(ped_temp.temperature_milli_c);
     }
 
     if (board_read_power_monitor(BOARD_POWER_MONITOR_PU, &pu_power) == BOARD_OK) {

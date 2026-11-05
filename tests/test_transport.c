@@ -642,7 +642,7 @@ static void telemetry_frame_0d02(void) {
     transport_reset();
 
     board_stub_set_rtc_time(0x11223344UL, 341U);
-    board_stub_set_digital_temp(BOARD_TEMP_SENSOR_PU, 30000, true); /* 30 C -> 300 deci */
+    board_stub_set_digital_temp(BOARD_TEMP_SENSOR_PU, 30000, true); /* 30 C -> 3000 (0.01 C) */
     board_stub_set_power_monitor(BOARD_POWER_MONITOR_PU, 3300U, 0, true);
 
     memset(&cfg, 0, sizeof(cfg));
@@ -672,7 +672,7 @@ static void telemetry_frame_0d02(void) {
 
     assert(rd16(&got[0]) == 341U);               /* RTC ms */
     assert(got[2] == 0x44U && got[5] == 0x11U);  /* RTC sec LE */
-    assert(rd16(&got[8]) == 300U);               /* PU temp (deci) */
+    assert(rd16(&got[8]) == 3000U);              /* PU temp (0.01 C) */
     assert(rd16(&got[14]) == 3300U);             /* PU voltage mV */
     assert(rd16(&got[22]) == 0x00A5U);           /* alarm status */
     assert(rd16(&got[24]) == 0x0084U);           /* masked alarm */
