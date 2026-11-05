@@ -74,6 +74,13 @@ static void shutdown_from_duty_powers_down_and_saves(void) {
     assert(!ctx.shutdown.power_off_failed);
     assert(!ctx.ped.is_powered);
 
+    /* Д-5 mode 7: PED and NAND lines released, SPI (MRAM) and I2C ports in Z. */
+    assert(board_stub_signal_disconnect_count(BOARD_SIGNAL_PED) == 1U);
+    assert(board_stub_signal_disconnect_count(BOARD_SIGNAL_NAND1) == 1U);
+    assert(board_stub_signal_disconnect_count(BOARD_SIGNAL_NAND2) == 1U);
+    assert(board_stub_signal_disconnect_count(BOARD_SIGNAL_MRAM) == 1U);
+    assert(board_stub_signal_disconnect_count(BOARD_SIGNAL_I2C) == 1U);
+
     assert((board_nand_is_powered(1U, &powered1) == BOARD_OK) && (powered1 == 0U));
     assert((board_nand_is_powered(2U, &powered2) == BOARD_OK) && (powered2 == 0U));
 
@@ -128,16 +135,13 @@ static void shutdown_records_save_failure_but_completes(void) {
  * status TS and does not change the mode. */
 static void status_req_allowed_in_shutdown(void) {
     SystemContext ctx;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
     uint16_t message_id = 0U;
     uint16_t address_to = 0U;
     uint16_t length = 0U;
 
     begin_test(&ctx, STATE_SHUTDOWN);
 
-    memset(payload, FILL_BYTE, SHORT_PAYLOAD_SIZE);
-    board_comm_stub_inject_rx(KU_STATUS_REQ_MSG_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+    board_comm_stub_inject_rx(KU_STATUS_REQ_MSG_ID, ADDR_BVS, ADDR_NA, NULL, 0U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK); /* enqueue event */
     algorithm_process_events(&ctx);               /* enqueue ACK + status */
@@ -152,7 +156,7 @@ static void status_req_allowed_in_shutdown(void) {
  * the mode unchanged. */
 static void forbidden_command_rejected_with_err_mode(void) {
     SystemContext ctx;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
+    uint8_t payload[1];
     uint8_t reply[SHORT_PAYLOAD_SIZE];
     uint16_t message_id = 0U;
     uint16_t address_to = 0U;
@@ -162,10 +166,9 @@ static void forbidden_command_rejected_with_err_mode(void) {
 
     /* Valid erase payload (NAND1, power off): builds successfully so the FSM,
      * not the parser, is what rejects it. */
-    memset(payload, FILL_BYTE, SHORT_PAYLOAD_SIZE);
     payload[0] = 0x01U;
     board_comm_stub_inject_rx(KU_ERASE_MSG_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+                              payload, 1U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK); /* enqueue event */
     algorithm_process_events(&ctx);               /* reject -> ERR_MODE ACK */

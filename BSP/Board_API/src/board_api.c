@@ -40,6 +40,14 @@ _Static_assert(BOARD_NAND_BLOCK_COUNT == NAND_MT29F_BLOCKS_PER_LUN,
 #include "mram.h"
 #endif
 
+#if defined(NATALIA_ENABLE_SPI_DRIVER) && (NATALIA_ENABLE_SPI_DRIVER != 0)
+#include "spi.h"
+#endif
+
+#if defined(NATALIA_ENABLE_I2C_DRIVER) && (NATALIA_ENABLE_I2C_DRIVER != 0)
+#include "i2c.h"
+#endif
+
 #if defined(NATALIA_ENABLE_FTDI_DRIVER) && (NATALIA_ENABLE_FTDI_DRIVER != 0)
 #include "ftdi.h"
 #endif
@@ -985,6 +993,81 @@ static BoardStatus board_nand_disconnect_pins(uint8_t bank_id) {
     return BOARD_ERR_INVALID_ARG;
 }
 
+static void board_remember_first_error(BoardStatus* first, BoardStatus status) {
+    if ((*first == BOARD_OK) && (status != BOARD_OK)) {
+        *first = status;
+    }
+}
+
+static BoardStatus board_disconnect_pin_list(const BoardPinId* pins, size_t count) {
+    BoardStatus first = BOARD_OK;
+    size_t index;
+
+    for (index = 0U; index < count; ++index) {
+        board_remember_first_error(&first, gpio_set_disconnected(pins[index]));
+    }
+
+    return first;
+}
+
+static BoardStatus board_disconnect_mram_lines(void) {
+    static const BoardPinId mram_pins[] = {
+        BOARD_PIN_SPI1_NSS,
+        BOARD_PIN_SPI1_SCK,
+        BOARD_PIN_SPI1_MISO,
+        BOARD_PIN_SPI1_MOSI,
+        BOARD_PIN_SPI3_NSS,
+        BOARD_PIN_SPI3_SCK,
+        BOARD_PIN_SPI3_MISO,
+        BOARD_PIN_SPI3_MOSI
+    };
+    BoardStatus first = BOARD_OK;
+
+#if defined(NATALIA_ENABLE_SPI_DRIVER) && (NATALIA_ENABLE_SPI_DRIVER != 0)
+    board_remember_first_error(&first, spi_deinit_bus(SPI_BUS_MRAM1));
+    board_remember_first_error(&first, spi_deinit_bus(SPI_BUS_MRAM2));
+#endif
+
+    board_remember_first_error(&first,
+                               board_disconnect_pin_list(mram_pins,
+                                                         sizeof(mram_pins) / sizeof(mram_pins[0])));
+
+    return first;
+}
+
+static BoardStatus board_disconnect_i2c_lines(void) {
+    static const BoardPinId i2c_pins[] = {
+        BOARD_PIN_I2C1_SCL,
+        BOARD_PIN_I2C1_SDA,
+        BOARD_PIN_I2C2_SCL,
+        BOARD_PIN_I2C2_SDA,
+        BOARD_PIN_I2C3_SCL,
+        BOARD_PIN_I2C3_SDA
+    };
+    BoardStatus first = BOARD_OK;
+
+#if defined(NATALIA_ENABLE_I2C_DRIVER) && (NATALIA_ENABLE_I2C_DRIVER != 0)
+    board_remember_first_error(&first, i2c_deinit_bus(I2C_BUS_POWER));
+    board_remember_first_error(&first, i2c_deinit_bus(I2C_BUS_TEMP));
+    board_remember_first_error(&first, i2c_deinit_bus(I2C_BUS_PED));
+#endif
+
+#if defined(NATALIA_ENABLE_INA219_DRIVER) && (NATALIA_ENABLE_INA219_DRIVER != 0)
+    board_ina219_pu_initialized = 0U;
+    board_ina219_ped_initialized = 0U;
+#endif
+
+#if defined(NATALIA_ENABLE_TMP112_DRIVER) && (NATALIA_ENABLE_TMP112_DRIVER != 0)
+    board_tmp112_initialized = 0U;
+#endif
+
+    board_remember_first_error(&first,
+                               board_disconnect_pin_list(i2c_pins,
+                                                         sizeof(i2c_pins) / sizeof(i2c_pins[0])));
+
+    return first;
+}
+
 BoardStatus board_disconnect_signal_lines(BoardSignalTarget target) {
     if (target == BOARD_SIGNAL_NAND1) {
         return board_nand_disconnect_pins(1U);
@@ -992,6 +1075,22 @@ BoardStatus board_disconnect_signal_lines(BoardSignalTarget target) {
 
     if (target == BOARD_SIGNAL_NAND2) {
         return board_nand_disconnect_pins(2U);
+    }
+
+    if (target == BOARD_SIGNAL_PED) {
+#if defined(BOARD_PED_POWER_HOLD)
+        return ped_reg_disconnect_bus();
+#else
+        return BOARD_OK;
+#endif
+    }
+
+    if (target == BOARD_SIGNAL_MRAM) {
+        return board_disconnect_mram_lines();
+    }
+
+    if (target == BOARD_SIGNAL_I2C) {
+        return board_disconnect_i2c_lines();
     }
 
     return BOARD_ERR_UNSUPPORTED;
@@ -2757,6 +2856,23 @@ BoardStatus board_read_power_status(uint32_t* power_status) {
     if (status != BOARD_OK) {
         return status;
     }
+
+#if defined(NATALIA_ENABLE_FTDI_DRIVER) && (NATALIA_ENABLE_FTDI_DRIVER != 0)
+    status = board_status_read_output_bit(power_status, BOARD_PIN_PU_FTDI_PS, 10U);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = board_status_read_input_bit(power_status, BOARD_PIN_PU_FTDI_PSON, 11U);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    status = board_status_read_output_bit(power_status, BOARD_PIN_PU_FTDI_RES, 12U);
+    if (status != BOARD_OK) {
+        return status;
+    }
+#endif
 
     status = board_status_read_output_bit(power_status, BOARD_PIN_PED_INHIBIT, 13U);
     if (status != BOARD_OK) {

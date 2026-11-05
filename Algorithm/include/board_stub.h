@@ -62,6 +62,17 @@ void board_stub_set_nand_write_fail_at(uint8_t bank_id, uint32_t packet_index);
 void board_stub_set_nand_erase_status(uint8_t bank_id, BoardStatus status);
 void board_stub_set_nand_read_status(uint8_t bank_id, BoardStatus status);
 
+/* Make board_nand_connect, board_nand_erase_start or board_nand_open_read return
+ * `status` for a bank (1 or 2): the chip does not answer when the mode is entered.
+ * BOARD_OK (the default) disables the failure. */
+void board_stub_set_nand_connect_status(uint8_t bank_id, BoardStatus status);
+void board_stub_set_nand_erase_start_status(uint8_t bank_id, BoardStatus status);
+void board_stub_set_nand_open_read_status(uint8_t bank_id, BoardStatus status);
+
+/* Number of board_disconnect_signal_lines calls for a target since the last
+ * board_stub_reset_all. */
+uint32_t board_stub_signal_disconnect_count(BoardSignalTarget target);
+
 /* Flips bit 0 of the first byte of `packet_index` on every board_nand_read_packet
  * of that bank (the stored data stays intact). Lets a test model a bit error that
  * TEST must count in Nerr. UINT32_MAX (the default) disables it. */

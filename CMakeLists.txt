@@ -32,6 +32,10 @@ set(NATALIA_LOG_BACKEND "NONE" CACHE STRING
 )
 set_property(CACHE NATALIA_LOG_BACKEND PROPERTY STRINGS NONE LPUART1 USART2 FTDI CAN)
 
+set(NATALIA_LPUART1_BAUDRATE "115200" CACHE STRING
+        "LPUART1 log baud rate (HSI16 kernel clock: 9600..5333333)"
+)
+
 option(NATALIA_ENABLE_DETECTOR_PROTO_LOG
         "Enable DSTLOG UniCAN protocol log for detector test application"
         OFF)

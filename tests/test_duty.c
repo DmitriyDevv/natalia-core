@@ -222,7 +222,7 @@ static void requests_are_answered(void) {
 
     run(&ctx, &version);
     assert(last_of(TS_VERSION_MSG_ID, NULL, 0U, &length));
-    assert(length == 6U);
+    assert(length == 3U);
 
     run(&ctx, &result);
     assert(last_of(TS_TEST_RESULT_MSG_ID, NULL, 0U, &length));
@@ -369,7 +369,7 @@ static void set_time_rejects_milliseconds_over_999(void) {
 static void sputniks_time_applies_and_acks_with_its_id(void) {
     SystemContext ctx;
     InstrumentTime now;
-    uint8_t payload[6] = {0x10U, 0x00U, 0x00U, 0x00U, 0xAAU, 0xAAU};
+    uint8_t payload[5] = {0x10U, 0x00U, 0x00U, 0x00U, 0x00U};
 
     begin_duty(&ctx);
     inject(KU_SPUTNIKS_TIME_ID, payload, sizeof(payload));
@@ -383,7 +383,7 @@ static void sputniks_time_applies_and_acks_with_its_id(void) {
 static void sputniks_time_dropped_when_ignored(void) {
     SystemContext ctx;
     InstrumentTime now;
-    uint8_t payload[6] = {0x10U, 0x00U, 0x00U, 0x00U, 0xAAU, 0xAAU};
+    uint8_t payload[5] = {0x10U, 0x00U, 0x00U, 0x00U, 0x00U};
 
     begin_duty(&ctx);
     ctx.can_control = 0x0002U;

@@ -63,6 +63,7 @@ static volatile uint32_t ped_reg_faults;
 static volatile uint32_t ped_reg_events_read;
 static volatile uint32_t ped_reg_events_held;
 static volatile uint32_t ped_reg_seconds_marked;
+static PedRegPowerOnReport ped_reg_power_on_report;
 
 static void ped_reg_delay_nops(uint32_t count) {
     uint32_t i;
@@ -364,6 +365,7 @@ BoardStatus ped_reg_init(void) {
     ped_reg_events_read = 0U;
     ped_reg_events_held = 0U;
     ped_reg_seconds_marked = 0U;
+    ped_reg_power_on_report = (PedRegPowerOnReport){0U, 0U, 0U, 0U, 0U};
     ped_reg_ring_reset(&ped_reg_ring);
 
     ped_reg_configure_bus_safe();
@@ -374,11 +376,25 @@ BoardStatus ped_reg_init(void) {
     return BOARD_OK;
 }
 
+BoardStatus ped_reg_get_power_on_report(PedRegPowerOnReport* report) {
+    if (report == 0) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+
+    *report = ped_reg_power_on_report;
+
+    return BOARD_OK;
+}
+
 BoardStatus ped_reg_power_on(void) {
     uint16_t status_l;
     uint16_t status_h;
 
-    if (ped_reg_power_good()) {
+    ped_reg_power_on_report = (PedRegPowerOnReport){PED_REG_POWER_ON_NOT_RUN, 0U, 0U, 0U, 0U};
+    ped_reg_power_on_report.pson_before = ped_reg_power_good() ? 1U : 0U;
+
+    if (ped_reg_power_on_report.pson_before != 0U) {
+        ped_reg_power_on_report.stage = PED_REG_POWER_ON_PSON_HIGH_BEFORE;
         ped_reg_raise_fault(PED_REG_FAULT_POWER);
         return BOARD_ERR_NOT_READY;
     }
@@ -387,7 +403,11 @@ BoardStatus ped_reg_power_on(void) {
 
     timebase_delay_ms_blocking(PED_REG_POWERON_DELAY_MS);
 
-    if (!ped_reg_power_good()) {
+    ped_reg_power_on_report.pson_after = ped_reg_power_good() ? 1U : 0U;
+
+    if (ped_reg_power_on_report.pson_after == 0U) {
+        GPIOE->BSRR = PED_REG_POWER_PIN << 16U;
+        ped_reg_power_on_report.stage = PED_REG_POWER_ON_PSON_LOW_AFTER;
         ped_reg_raise_fault(PED_REG_FAULT_POWER);
         return BOARD_ERR_NOT_READY;
     }
@@ -401,7 +421,10 @@ BoardStatus ped_reg_power_on(void) {
     GPIOF->MODER |= 0x00005555UL;
     GPIOF->BSRR = PED_REG_ADDR_MASK << 16U;
 
-    if (!ped_reg_ready_low()) {
+    ped_reg_power_on_report.ready_low = ped_reg_ready_low() ? 1U : 0U;
+
+    if (ped_reg_power_on_report.ready_low == 0U) {
+        ped_reg_power_on_report.stage = PED_REG_POWER_ON_READY_HIGH;
         ped_reg_raise_fault(PED_REG_FAULT_READY);
         return BOARD_ERR_NOT_READY;
     }
@@ -410,12 +433,16 @@ BoardStatus ped_reg_power_on(void) {
 
     status_l = ped_reg_register_read(PED_REG_ADDR_STATUS_L);
     status_h = ped_reg_register_read(PED_REG_ADDR_STATUS_H);
+    ped_reg_power_on_report.status = (uint32_t)status_l | ((uint32_t)status_h << 16U);
 
     if ((status_l != PED_REG_STATUS_L_EXPECTED) ||
         (status_h != PED_REG_STATUS_H_EXPECTED)) {
+        ped_reg_power_on_report.stage = PED_REG_POWER_ON_STATUS_MISMATCH;
         ped_reg_raise_fault(PED_REG_FAULT_STATUS);
         return BOARD_ERR_IO;
     }
+
+    ped_reg_power_on_report.stage = PED_REG_POWER_ON_OK;
 
     ped_reg_set_pin_output(GPIOE, 7UL);
     ped_reg_set_pin_output(GPIOE, 8UL);
@@ -430,16 +457,28 @@ BoardStatus ped_reg_power_on(void) {
     return BOARD_OK;
 }
 
-BoardStatus ped_reg_power_off(void) {
-    ped_reg_mask_irqs();
-
-    ped_reg_power_expected = 0U;
+static void ped_reg_release_bus(void) {
     ped_reg_bus_active = 0U;
     ped_reg_events_enabled = 0U;
     ped_reg_event_held = 0U;
     ped_reg_configure_bus_safe();
+}
+
+BoardStatus ped_reg_power_off(void) {
+    ped_reg_mask_irqs();
+
+    ped_reg_power_expected = 0U;
+    ped_reg_release_bus();
     GPIOE->BSRR = PED_REG_POWER_PIN << 16U;
 
+    ped_reg_unmask_irqs();
+
+    return BOARD_OK;
+}
+
+BoardStatus ped_reg_disconnect_bus(void) {
+    ped_reg_mask_irqs();
+    ped_reg_release_bus();
     ped_reg_unmask_irqs();
 
     return BOARD_OK;

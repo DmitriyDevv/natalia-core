@@ -155,16 +155,13 @@ static void masked_alarm_in_erase_enters_alarm(void) {
 /* CMD_STATUS_REQ is answered with a status TS and keeps the mode. */
 static void status_req_allowed_in_erase(void) {
     SystemContext ctx;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
     uint16_t message_id = 0U;
     uint16_t address_to = 0U;
     uint16_t length = 0U;
 
     begin_test(&ctx, STATE_ERASE);
 
-    memset(payload, FILL_BYTE, SHORT_PAYLOAD_SIZE);
-    board_comm_stub_inject_rx(KU_STATUS_REQ_MSG_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+    board_comm_stub_inject_rx(KU_STATUS_REQ_MSG_ID, ADDR_BVS, ADDR_NA, NULL, 0U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
     algorithm_process_events(&ctx);
@@ -179,7 +176,7 @@ static void status_req_allowed_in_erase(void) {
  * mode. */
 static void forbidden_command_rejected_with_err_mode(void) {
     SystemContext ctx;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
+    uint8_t payload[1];
     uint8_t reply[SHORT_PAYLOAD_SIZE];
     uint16_t message_id = 0U;
     uint16_t address_to = 0U;
@@ -187,10 +184,9 @@ static void forbidden_command_rejected_with_err_mode(void) {
 
     begin_test(&ctx, STATE_ERASE);
 
-    memset(payload, FILL_BYTE, SHORT_PAYLOAD_SIZE);
     payload[0] = 0x01U;
     board_comm_stub_inject_rx(KU_TEST_MSG_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+                              payload, 1U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
     algorithm_process_events(&ctx);

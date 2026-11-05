@@ -9,6 +9,7 @@ target_sources(natalia_algorithm PRIVATE
         src/ni_format.c
         src/ni_stream.c
         src/observe_science.c
+        src/belt_curve.c
         src/nand_map.c
         src/ni_writer.c
         src/tlm_staging.c

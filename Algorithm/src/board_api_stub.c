@@ -36,6 +36,10 @@ static uint32_t board_stub_nand_scans[BOARD_STUB_NAND_BANK_COUNT];
 static uint32_t board_stub_nand_write_fail_at[BOARD_STUB_NAND_BANK_COUNT];
 static BoardStatus board_stub_nand_erase_status[BOARD_STUB_NAND_BANK_COUNT];
 static BoardStatus board_stub_nand_read_status[BOARD_STUB_NAND_BANK_COUNT];
+static BoardStatus board_stub_nand_connect_status[BOARD_STUB_NAND_BANK_COUNT];
+static BoardStatus board_stub_nand_erase_start_status[BOARD_STUB_NAND_BANK_COUNT];
+static BoardStatus board_stub_nand_open_read_status[BOARD_STUB_NAND_BANK_COUNT];
+static uint32_t board_stub_signal_disconnects[BOARD_SIGNAL_I2C + 1];
 static uint32_t board_stub_nand_corrupt_at[BOARD_STUB_NAND_BANK_COUNT];
 static BoardStatus board_stub_data_write_status;
 static BoardStatus board_stub_data_flush_status;
@@ -210,6 +214,31 @@ void board_stub_set_nand_read_status(uint8_t bank_id, BoardStatus status) {
     }
 }
 
+void board_stub_set_nand_connect_status(uint8_t bank_id, BoardStatus status) {
+    if ((bank_id == 1U) || (bank_id == 2U)) {
+        board_stub_nand_connect_status[bank_id - 1U] = status;
+    }
+}
+
+void board_stub_set_nand_erase_start_status(uint8_t bank_id, BoardStatus status) {
+    if ((bank_id == 1U) || (bank_id == 2U)) {
+        board_stub_nand_erase_start_status[bank_id - 1U] = status;
+    }
+}
+
+void board_stub_set_nand_open_read_status(uint8_t bank_id, BoardStatus status) {
+    if ((bank_id == 1U) || (bank_id == 2U)) {
+        board_stub_nand_open_read_status[bank_id - 1U] = status;
+    }
+}
+
+uint32_t board_stub_signal_disconnect_count(BoardSignalTarget target) {
+    if ((uint32_t)target > (uint32_t)BOARD_SIGNAL_I2C) {
+        return 0U;
+    }
+    return board_stub_signal_disconnects[target];
+}
+
 void board_stub_set_nand_corrupt_packet(uint8_t bank_id, uint32_t packet_index) {
     if ((bank_id == 1U) || (bank_id == 2U)) {
         board_stub_nand_corrupt_at[bank_id - 1U] = packet_index + 1U;
@@ -334,6 +363,13 @@ void board_stub_reset_all(void) {
     board_stub_nand_erase_status[1] = BOARD_OK;
     board_stub_nand_read_status[0] = BOARD_OK;
     board_stub_nand_read_status[1] = BOARD_OK;
+    board_stub_nand_connect_status[0] = BOARD_OK;
+    board_stub_nand_connect_status[1] = BOARD_OK;
+    board_stub_nand_erase_start_status[0] = BOARD_OK;
+    board_stub_nand_erase_start_status[1] = BOARD_OK;
+    board_stub_nand_open_read_status[0] = BOARD_OK;
+    board_stub_nand_open_read_status[1] = BOARD_OK;
+    (void)memset(board_stub_signal_disconnects, 0, sizeof(board_stub_signal_disconnects));
     board_stub_nand_corrupt_at[0] = 0U;
     board_stub_nand_corrupt_at[1] = 0U;
     board_stub_data_write_status = BOARD_OK;
@@ -492,7 +528,10 @@ BoardStatus board_enter_safe_config(void) {
 }
 
 BoardStatus board_disconnect_signal_lines(BoardSignalTarget target) {
-    (void)target;
+    if ((uint32_t)target > (uint32_t)BOARD_SIGNAL_I2C) {
+        return BOARD_ERR_INVALID_ARG;
+    }
+    ++board_stub_signal_disconnects[target];
     return BOARD_OK;
 }
 
@@ -758,6 +797,10 @@ BoardStatus board_nand_connect(uint8_t bank_id) {
         return BOARD_ERR_NOT_READY;
     }
 
+    if (board_stub_nand_connect_status[bank_index] != BOARD_OK) {
+        return board_stub_nand_connect_status[bank_index];
+    }
+
     board_stub_nand_is_connected[bank_index] = 1U;
 
     return BOARD_OK;
@@ -956,6 +999,10 @@ BoardStatus board_nand_open_read(uint8_t bank_id, uint32_t packet_count) {
         return status;
     }
 
+    if (board_stub_nand_open_read_status[bank_index] != BOARD_OK) {
+        return board_stub_nand_open_read_status[bank_index];
+    }
+
     if (packet_count > BOARD_STUB_NAND_PACKET_COUNT) {
         return BOARD_ERR_INVALID_ARG;
     }
@@ -1085,6 +1132,10 @@ BoardStatus board_nand_erase_start(uint8_t bank_id) {
     status = board_stub_get_nand_index(bank_id, &bank_index);
     if (status != BOARD_OK) {
         return status;
+    }
+
+    if (board_stub_nand_erase_start_status[bank_index] != BOARD_OK) {
+        return board_stub_nand_erase_start_status[bank_index];
     }
 
     (void)memset(board_stub_nand[bank_index], 0xFF, BOARD_STUB_NAND_SIZE);

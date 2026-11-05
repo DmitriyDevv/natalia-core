@@ -2,7 +2,11 @@
 
 #include "lpuart1.h"
 
-#define LOG_BACKEND_LPUART1_BAUDRATE (115200UL)
+#ifndef NATALIA_LPUART1_BAUDRATE
+#define NATALIA_LPUART1_BAUDRATE (115200UL)
+#endif
+
+#define LOG_BACKEND_LPUART1_BAUDRATE (NATALIA_LPUART1_BAUDRATE)
 
 BoardStatus log_backend_init(void) {
     return lpuart1_init(LOG_BACKEND_LPUART1_BAUDRATE);

@@ -59,6 +59,17 @@ static void enqueue_dump(uint32_t packet_count) {
     assert(system_event_queue_push_back(&event));
 }
 
+static void enqueue_observe(void) {
+    SystemEvent event;
+    memset(&event, 0, sizeof(event));
+    event.type = EVENT_CMD_OBSERVE_START;
+    event.command.observe_start.bank = NAND_BANK_1;
+    event.command.observe_start.power_after_done = POWER_AFTER_DONE_OFF;
+    event.command.observe_start.observe_params = 0x0011U;
+    event.command.observe_start.registration_enabled = true;
+    assert(system_event_queue_push_back(&event));
+}
+
 static void step(SystemContext *ctx) {
     algorithm_poll(ctx);
     algorithm_process_events(ctx);
@@ -132,6 +143,79 @@ static void dump_read_failure_raises_nand_pr(void) {
     assert((ctx.alarm_status & ALARM_NAND_PR) != 0U);
     assert((ctx.alarm_status & ALARM_USB_PR) == 0U);
     assert(!board_stub_data_link_is_open());
+}
+
+/* Д-5: if the NAND chip does not answer when a mode is entered (bank connect,
+ * start of erase, test or read), the instrument sets ALARM_NAND_PR, switches the
+ * bank off and goes to ALARM instead of staying in DUTY with a 09h receipt. */
+static void assert_entry_failure_alarm(SystemContext *ctx) {
+    algorithm_process_events(ctx);
+
+    assert(ctx->state == STATE_ALARM);
+    assert((ctx->alarm_status & ALARM_NAND_PR) != 0U);
+    assert(!nand1_powered());
+}
+
+static void erase_connect_failure_raises_nand_pr(void) {
+    SystemContext ctx;
+
+    begin_test(&ctx, ALARM_ALL_MASK);
+    board_stub_set_nand_connect_status(1U, BOARD_ERR_TIMEOUT);
+    enqueue_erase();
+    assert_entry_failure_alarm(&ctx);
+}
+
+static void erase_start_failure_raises_nand_pr(void) {
+    SystemContext ctx;
+
+    begin_test(&ctx, ALARM_ALL_MASK);
+    board_stub_set_nand_erase_start_status(1U, BOARD_ERR_IO);
+    enqueue_erase();
+    assert_entry_failure_alarm(&ctx);
+}
+
+static void test_start_failure_raises_nand_pr(void) {
+    SystemContext ctx;
+
+    begin_test(&ctx, ALARM_ALL_MASK);
+    board_stub_set_nand_erase_start_status(1U, BOARD_ERR_TIMEOUT);
+    enqueue_test();
+    assert_entry_failure_alarm(&ctx);
+    assert((ctx.test.result_status & TEST_RESULT_STATUS_NAND_ERASE_ERROR) != 0U);
+}
+
+static void dump_open_failure_raises_nand_pr(void) {
+    SystemContext ctx;
+
+    begin_test(&ctx, ALARM_ALL_MASK);
+    board_stub_set_nand_open_read_status(1U, BOARD_ERR_IO);
+    enqueue_dump(4U);
+    assert_entry_failure_alarm(&ctx);
+    assert(!board_stub_data_link_is_open());
+}
+
+static void observe_connect_failure_raises_nand_pr(void) {
+    SystemContext ctx;
+
+    begin_test(&ctx, ALARM_ALL_MASK);
+    board_stub_set_nand_connect_status(1U, BOARD_ERR_IO);
+    enqueue_observe();
+    assert_entry_failure_alarm(&ctx);
+}
+
+/* An invalid-argument status is a firmware error, not a NAND exchange failure:
+ * it keeps the 05h receipt path and does not raise ALARM_NAND_PR. */
+static void erase_start_invalid_arg_is_not_nand_alarm(void) {
+    SystemContext ctx;
+
+    begin_test(&ctx, ALARM_ALL_MASK);
+    board_stub_set_nand_erase_start_status(1U, BOARD_ERR_INVALID_ARG);
+    enqueue_erase();
+    algorithm_process_events(&ctx);
+
+    assert(ctx.state == STATE_DUTY);
+    assert((ctx.alarm_status & ALARM_NAND_PR) == 0U);
+    assert(!nand1_powered());
 }
 
 /* An uncorrectable-ECC page is sent as it is: the packet carries its own CRC
@@ -400,6 +484,12 @@ static void masked_mram_failure_on_completion_ends_in_duty(void) {
 }
 
 int main(void) {
+    erase_connect_failure_raises_nand_pr();
+    erase_start_failure_raises_nand_pr();
+    test_start_failure_raises_nand_pr();
+    dump_open_failure_raises_nand_pr();
+    observe_connect_failure_raises_nand_pr();
+    erase_start_invalid_arg_is_not_nand_alarm();
     erase_failure_raises_nand_pr();
     test_write_failure_raises_nand_pr();
     dump_read_failure_raises_nand_pr();

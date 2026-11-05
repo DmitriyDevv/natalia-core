@@ -12,7 +12,9 @@ typedef enum {
     BOARD_SIGNAL_NAND1 = 0,
     BOARD_SIGNAL_NAND2,
     BOARD_SIGNAL_PED,
-    BOARD_SIGNAL_RTC_OUT
+    BOARD_SIGNAL_RTC_OUT,
+    BOARD_SIGNAL_MRAM,
+    BOARD_SIGNAL_I2C
 } BoardSignalTarget;
 
 typedef struct {

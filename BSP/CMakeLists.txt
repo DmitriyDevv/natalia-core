@@ -151,6 +151,10 @@ elseif (NATALIA_LOG_BACKEND STREQUAL "LPUART1")
     target_compile_definitions(natalia_bsp PUBLIC
             NATALIA_LOG_BACKEND=1
     )
+
+    target_compile_definitions(natalia_bsp PRIVATE
+            NATALIA_LPUART1_BAUDRATE=${NATALIA_LPUART1_BAUDRATE}UL
+    )
 elseif (NATALIA_LOG_BACKEND STREQUAL "USART2")
     target_sources(natalia_bsp PRIVATE
             UART/src/usart2_config.c

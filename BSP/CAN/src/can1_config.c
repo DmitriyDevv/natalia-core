@@ -15,22 +15,22 @@
 /*
  * CAN1 bitrate configuration for PCLK1 = 80 MHz:
  *
- * Prescaler = 10
+ * Prescaler = 5
  * BS1       = 13 TQ
  * BS2       = 2 TQ
  * SJW       = 1 TQ
  *
  * Total TQ  = 1 + 13 + 2 = 16
- * Bitrate   = 80 MHz / 10 / 16 = 500 kbit/s
+ * Bitrate   = 80 MHz / 5 / 16 = 1 Mbit/s
  * Sample point = (1 + 13) / 16 = 87.5%
  *
  * bxCAN stores values as "real value - 1".
  *
- * To use 1 Mbit/s with the same clock and segments,
- * change CAN1_BTR_BRP_VALUE from 9U to 4U:
- * 80 MHz / 5 / 16 = 1 Mbit/s.
+ * To use 500 kbit/s with the same clock and segments,
+ * change CAN1_BTR_BRP_VALUE from 4U to 9U:
+ * 80 MHz / 10 / 16 = 500 kbit/s.
  */
-#define CAN1_BTR_BRP_VALUE           (9UL)   /* Prescaler = 10 */
+#define CAN1_BTR_BRP_VALUE           (4UL)   /* Prescaler = 5 */
 #define CAN1_BTR_TS1_VALUE           (12UL)  /* BS1 = 13 TQ */
 #define CAN1_BTR_TS2_VALUE           (1UL)   /* BS2 = 2 TQ */
 #define CAN1_BTR_SJW_VALUE           (0UL)   /* SJW = 1 TQ */

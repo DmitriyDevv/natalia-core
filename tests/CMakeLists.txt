@@ -448,3 +448,19 @@ target_compile_options(test_transport_tx PRIVATE
 )
 
 add_test(NAME test_transport_tx COMMAND test_transport_tx)
+
+add_executable(test_belt_curve
+        test_belt_curve.c
+)
+
+target_link_libraries(test_belt_curve PRIVATE
+        natalia_algorithm
+)
+
+target_compile_options(test_belt_curve PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+)
+
+add_test(NAME test_belt_curve COMMAND test_belt_curve)

@@ -174,18 +174,16 @@ static void back_to_back_telemetry_is_all_sent(void) {
 
 static void old_address_is_dropped_after_device_id_change(void) {
     SystemContext ctx;
-    uint8_t payload[6];
     SystemEvent event;
 
     begin(&ctx);
     transport_apply_stored_addresses(0x0042U, ADDR_BVS);
-    memset(payload, 0xAA, sizeof(payload));
 
-    board_comm_stub_inject_rx(KU_STATUS_REQ_ID, ADDR_BVS, ADDR_NA, payload, sizeof(payload));
+    board_comm_stub_inject_rx(KU_STATUS_REQ_ID, ADDR_BVS, ADDR_NA, NULL, 0U);
     (void)transport_poll(&ctx, 0U);
     assert(system_event_queue_get_count() == 0U);
 
-    board_comm_stub_inject_rx(KU_STATUS_REQ_ID, ADDR_BVS, 0x0042U, payload, sizeof(payload));
+    board_comm_stub_inject_rx(KU_STATUS_REQ_ID, ADDR_BVS, 0x0042U, NULL, 0U);
     (void)transport_poll(&ctx, 0U);
     assert(system_event_queue_pop(&event));
     assert(event.type == EVENT_CMD_STATUS_REQ);

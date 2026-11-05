@@ -234,7 +234,11 @@ static void decodes_observe_params(void) {
     assert(!observe_science_decode_params(0x0001U, &params));
     assert(!observe_science_decode_params(0x0008U, &params));
     assert(!observe_science_decode_params(0x0031U, &params));
-    assert(!observe_science_decode_params(0x0007U | 0x0008U, &params));
+
+    params = decode(0x0007U | 0x0008U);
+    assert(params.events_mode == (uint8_t)OBSERVE_EVENTS_OUTSIDE_BELTS_CURVE);
+    assert(params.events_nmax == 1U);
+    assert(!observe_science_decode_params(0x0007U, &params));
 }
 
 static void first_second_writes_only_telemetry(void) {
@@ -481,6 +485,76 @@ static void events_condition_ac1_rate(void) {
     assert(format_word(&formats[2], 11U) == 2U);
 }
 
+static const ParsedFormat* only_events_format(void) {
+    const ParsedFormat* found = NULL;
+    size_t i;
+
+    for (i = 0U; i < format_count; ++i) {
+        if (formats[i].type == 0x00U) {
+            assert(found == NULL);
+            found = &formats[i];
+        }
+    }
+
+    assert(found != NULL);
+    return found;
+}
+
+/* Mode 7: "Events" only outside the belts, belt = B <= B_lim(L) from the
+ * flash polyline (belt_curve). Same KT units as mode 5. */
+static void events_condition_belt_curve(void) {
+    const ParsedFormat* events;
+
+    start_session(0x0017U, NULL);
+    second(600U, 0U);
+
+    event(1U);
+    mcilwain(150, 236);
+    event(2U);
+    mcilwain(150, 235);
+    event(3U);
+    mcilwain(300, 450);
+    event(4U);
+    mcilwain(300, 446);
+    event(5U);
+    mcilwain(800, 450);
+    event(6U);
+    mcilwain(800, 451);
+    event(7U);
+    second(601U, 0U);
+    finish_and_parse();
+
+    events = only_events_format();
+    assert(events->words == 22U);
+    assert(format_word(events, 11U) == 2U);
+    assert(format_word(events, 15U) == 4U);
+    assert(format_word(events, 19U) == 7U);
+}
+
+/* KU 5 switches mode 5 -> 7 mid-session: the curve verdict is kept up to date
+ * for every KT, so the last KT before the switch applies at once. At L = 3.00,
+ * B = 0.400 Gs the simple model says "outside" (L > Lmax), the curve says
+ * "inside" (limit 44607 nT). */
+static void switch_from_simple_belts_to_curve(void) {
+    ObserveScienceParams curve = decode(0x0017U);
+    const ParsedFormat* events;
+
+    start_session(0x0015U, NULL);
+    second(700U, 0U);
+    mcilwain(300, 400);
+    event(1U);
+    observe_science_request_params(&science, &curve);
+    second(701U, 0U);
+    event(2U);
+    second(702U, 0U);
+    finish_and_parse();
+
+    events = only_events_format();
+    assert(events->words == 14U);
+    assert(events->mode == 0U);
+    assert(format_word(events, 11U) == 1U);
+}
+
 static void kt_before_first_second_updates_state_only(void) {
     start_session(0x0014U, NULL);
     mcilwain(200, 500);
@@ -581,6 +655,8 @@ int main(void) {
     events_condition_outside_both_belts();
     events_condition_geomagnetic();
     events_condition_ac1_rate();
+    events_condition_belt_curve();
+    switch_from_simple_belts_to_curve();
     kt_before_first_second_updates_state_only();
     sync_orbit_is_written();
     no_room_leaves_state_unchanged();

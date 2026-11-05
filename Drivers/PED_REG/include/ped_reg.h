@@ -11,6 +11,21 @@
 #define PED_REG_FAULT_READY  0x02U
 #define PED_REG_FAULT_STATUS 0x04U
 
+#define PED_REG_POWER_ON_NOT_RUN          0U
+#define PED_REG_POWER_ON_PSON_HIGH_BEFORE 1U
+#define PED_REG_POWER_ON_PSON_LOW_AFTER   2U
+#define PED_REG_POWER_ON_READY_HIGH       3U
+#define PED_REG_POWER_ON_STATUS_MISMATCH  4U
+#define PED_REG_POWER_ON_OK               5U
+
+typedef struct {
+    uint8_t stage;
+    uint8_t pson_before;
+    uint8_t pson_after;
+    uint8_t ready_low;
+    uint32_t status;
+} PedRegPowerOnReport;
+
 typedef struct {
     uint16_t amp_d;
     uint16_t trig_stat;
@@ -38,8 +53,10 @@ typedef struct {
 BoardStatus ped_reg_init(void);
 BoardStatus ped_reg_power_on(void);
 BoardStatus ped_reg_power_off(void);
+BoardStatus ped_reg_disconnect_bus(void);
 BoardStatus ped_reg_is_powered(uint8_t* is_powered);
 BoardStatus ped_reg_read_status(uint32_t* status);
+BoardStatus ped_reg_get_power_on_report(PedRegPowerOnReport* report);
 BoardStatus ped_reg_write_config(const void* config, size_t size);
 BoardStatus ped_reg_write_register(uint8_t address, uint16_t value);
 BoardStatus ped_reg_read_event(void* event_buffer, size_t buffer_size, size_t* bytes_read);

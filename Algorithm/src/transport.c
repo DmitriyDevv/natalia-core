@@ -48,6 +48,15 @@
 #define TRANSPORT_TELEMETRY_SIZE                   (109U)
 
 #define TRANSPORT_SHORT_PAYLOAD_SIZE               (6U)
+#define TRANSPORT_TS_VERSION_SIZE                  (3U)
+#define TRANSPORT_KU_SET_TIME_SIZE                 (6U)
+#define TRANSPORT_KU_OBSERVE_SIZE                  (5U)
+#define TRANSPORT_KU_DUTY_SIZE                     (1U)
+#define TRANSPORT_KU_DUMP_SIZE                     (4U)
+#define TRANSPORT_KU_BANK_CONFIG_SIZE              (1U)
+#define TRANSPORT_KU_SPUTNIKS_SET_TIME_SIZE        (5U)
+#define TRANSPORT_KU_ADDRESS_SIZE                  (2U)
+#define TRANSPORT_ADDRESS_MAX                      (0x3FFFU)
 #define TRANSPORT_SET_CFG_PAYLOAD_SIZE             (68U)
 #define TRANSPORT_FILL_BYTE                        (0xAAU)
 #define TRANSPORT_TX_QUEUE_LENGTH                  (8U)
@@ -101,13 +110,17 @@ void transport_reset(void) {
     transport_last_sender = BOARD_COMM_ADDR_BVS;
 }
 
+static bool transport_is_valid_address(uint16_t address) {
+    return (address != 0U) && (address <= TRANSPORT_ADDRESS_MAX);
+}
+
 void transport_apply_stored_addresses(uint16_t device_id,
                                       uint16_t destination_id) {
-    if (device_id != 0U) {
+    if (transport_is_valid_address(device_id)) {
         transport_local_address = device_id;
     }
 
-    if (destination_id != 0U) {
+    if (transport_is_valid_address(destination_id)) {
         transport_remote_address = destination_id;
     }
 }
@@ -709,17 +722,15 @@ BoardStatus transport_send_telemetry(const SystemContext* ctx) {
 }
 
 BoardStatus transport_send_version(void) {
-    uint8_t payload[TRANSPORT_SHORT_PAYLOAD_SIZE];
+    uint8_t payload[TRANSPORT_TS_VERSION_SIZE];
 
     payload[0] = NATALIA_SW_VERSION_MAJOR;
     payload[1] = NATALIA_SW_VERSION_MINOR;
     payload[2] = NATALIA_SW_VERSION_EXTRA;
-    payload[3] = TRANSPORT_FILL_BYTE;
-    payload[4] = TRANSPORT_FILL_BYTE;
-    payload[5] = TRANSPORT_FILL_BYTE;
 
-    return transport_enqueue_short_message(TRANSPORT_TS_VERSION_MSG_ID,
-                                           payload);
+    return transport_enqueue_message(TRANSPORT_TS_VERSION_MSG_ID,
+                                     payload,
+                                     TRANSPORT_TS_VERSION_SIZE);
 }
 
 BoardStatus transport_send_test_result(const uint8_t* data, uint16_t length) {
@@ -727,37 +738,17 @@ BoardStatus transport_send_test_result(const uint8_t* data, uint16_t length) {
                                           data, length);
 }
 
-static bool transport_payload_is_fill_range(const BoardCommMessage* message,
-                                            uint16_t first,
-                                            uint16_t limit) {
-    uint16_t index;
-
-    if ((message == NULL) ||
-        (message->data == NULL) ||
-        (message->length < limit) ||
-        (first > limit)) {
-        return false;
-    }
-
-    for (index = first; index < limit; ++index) {
-        if (message->data[index] != TRANSPORT_FILL_BYTE) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static bool transport_is_short_message(const BoardCommMessage* message) {
+static bool transport_has_length(const BoardCommMessage* message,
+                                 uint16_t length) {
     return (message != NULL) &&
-        (message->data != NULL) &&
-        (message->length == TRANSPORT_SHORT_PAYLOAD_SIZE);
+        (message->length == length) &&
+        ((length == 0U) || (message->data != NULL));
 }
 
 static BoardStatus transport_build_fill_command_event(const BoardCommMessage* message,
                                                       SystemEvent* event,
                                                       EventType type) {
-    if ((message == NULL) || (event == NULL)) {
+    if (!transport_has_length(message, 0U) || (event == NULL)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -773,7 +764,7 @@ static BoardStatus transport_build_set_time_event(const BoardCommMessage* messag
                                                   SystemEvent* event) {
     uint16_t milliseconds;
 
-    if (!transport_is_short_message(message) || (event == NULL)) {
+    if (!transport_has_length(message, TRANSPORT_KU_SET_TIME_SIZE) || (event == NULL)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -796,7 +787,8 @@ static BoardStatus transport_build_set_time_event(const BoardCommMessage* messag
 
 static BoardStatus transport_build_sputniks_set_time_event(const BoardCommMessage* message,
                                                            SystemEvent* event) {
-    if (!transport_is_short_message(message) || (event == NULL)) {
+    if (!transport_has_length(message, TRANSPORT_KU_SPUTNIKS_SET_TIME_SIZE) ||
+        (event == NULL)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -816,10 +808,6 @@ static bool transport_validate_observe_params(uint16_t params) {
     uint16_t event_count = (params >> 3U) & 0x0007U;
     uint16_t spectrum_mode = (params >> 6U) & 0x0003U;
     uint16_t hist_mode = (params >> 8U) & 0x0007U;
-
-    if (event_mode > 6U) {
-        return false;
-    }
 
     if (event_count > 5U) {
         return false;
@@ -863,11 +851,7 @@ static BoardStatus transport_build_observe_start_event(const BoardCommMessage* m
     uint16_t observe_params;
     uint16_t trigger_config;
 
-    if (!transport_is_short_message(message) || (event == NULL)) {
-        return BOARD_ERR_INVALID_ARG;
-    }
-
-    if (message->data[5] != TRANSPORT_FILL_BYTE) {
+    if (!transport_has_length(message, TRANSPORT_KU_OBSERVE_SIZE) || (event == NULL)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -918,11 +902,7 @@ static BoardStatus transport_build_observe_ctrl_event(const BoardCommMessage* me
     bool ped_sleep_enabled;
     bool registration_enabled;
 
-    if (!transport_is_short_message(message) || (event == NULL)) {
-        return BOARD_ERR_INVALID_ARG;
-    }
-
-    if (message->data[5] != TRANSPORT_FILL_BYTE) {
+    if (!transport_has_length(message, TRANSPORT_KU_OBSERVE_SIZE) || (event == NULL)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -967,11 +947,7 @@ static BoardStatus transport_build_duty_event(const BoardCommMessage* message,
     uint8_t config;
     uint8_t bank_id;
 
-    if (!transport_is_short_message(message) || (event == NULL)) {
-        return BOARD_ERR_INVALID_ARG;
-    }
-
-    if (!transport_payload_is_fill_range(message, 1U, TRANSPORT_SHORT_PAYLOAD_SIZE)) {
+    if (!transport_has_length(message, TRANSPORT_KU_BANK_CONFIG_SIZE) || (event == NULL)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -1009,12 +985,7 @@ static BoardStatus transport_build_dump_event(const BoardCommMessage* message,
     uint8_t output_type;
     uint32_t packet_count;
 
-    if (!transport_is_short_message(message) || (event == NULL)) {
-        return BOARD_ERR_INVALID_ARG;
-    }
-
-    if ((message->data[4] != TRANSPORT_FILL_BYTE) ||
-        (message->data[5] != TRANSPORT_FILL_BYTE)) {
+    if (!transport_has_length(message, TRANSPORT_KU_DUMP_SIZE) || (event == NULL)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -1143,11 +1114,7 @@ static BoardStatus transport_build_erase_event(const BoardCommMessage* message,
     uint8_t config;
     uint8_t bank_id;
 
-    if (!transport_is_short_message(message) || (event == NULL)) {
-        return BOARD_ERR_INVALID_ARG;
-    }
-
-    if (!transport_payload_is_fill_range(message, 1U, TRANSPORT_SHORT_PAYLOAD_SIZE)) {
+    if (!transport_has_length(message, TRANSPORT_KU_BANK_CONFIG_SIZE) || (event == NULL)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -1178,11 +1145,7 @@ static BoardStatus transport_build_test_event(const BoardCommMessage* message,
     uint8_t config;
     uint8_t bank_id;
 
-    if (!transport_is_short_message(message) || (event == NULL)) {
-        return BOARD_ERR_INVALID_ARG;
-    }
-
-    if (!transport_payload_is_fill_range(message, 1U, TRANSPORT_SHORT_PAYLOAD_SIZE)) {
+    if (!transport_has_length(message, TRANSPORT_KU_BANK_CONFIG_SIZE) || (event == NULL)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -1215,11 +1178,7 @@ static BoardStatus transport_build_test_result_event(const BoardCommMessage* mes
     uint8_t bank_id;
     uint8_t mram_copy;
 
-    if (!transport_is_short_message(message) || (event == NULL)) {
-        return BOARD_ERR_INVALID_ARG;
-    }
-
-    if (!transport_payload_is_fill_range(message, 1U, TRANSPORT_SHORT_PAYLOAD_SIZE)) {
+    if (!transport_has_length(message, TRANSPORT_KU_BANK_CONFIG_SIZE) || (event == NULL)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
@@ -1317,14 +1276,14 @@ static BoardStatus transport_build_command_event(const BoardCommMessage* message
 }
 
 static BoardStatus transport_handle_address_command(const BoardCommMessage* message) {
-    if (!transport_is_short_message(message)) {
+    if (!transport_has_length(message, TRANSPORT_KU_ADDRESS_SIZE)) {
         return BOARD_ERR_INVALID_ARG;
     }
 
     if (message->message_id == TRANSPORT_KU_SET_DESTINATION_ID_MSG_ID) {
         uint16_t destination_id = transport_read_le_u16(&message->data[0]);
 
-        if (destination_id == 0U) {
+        if (!transport_is_valid_address(destination_id)) {
             return BOARD_ERR_INVALID_ARG;
         }
 
@@ -1335,7 +1294,7 @@ static BoardStatus transport_handle_address_command(const BoardCommMessage* mess
     if (message->message_id == TRANSPORT_KU_SET_DEVICE_ID_MSG_ID) {
         uint16_t device_id = transport_read_le_u16(&message->data[0]);
 
-        if (device_id == 0U) {
+        if (!transport_is_valid_address(device_id)) {
             return BOARD_ERR_INVALID_ARG;
         }
 

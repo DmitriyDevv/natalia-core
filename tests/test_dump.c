@@ -174,17 +174,16 @@ static void dump_all_rejected_when_bank_empty(void) {
  * is supported (mode_dump §4.2). */
 static void can_output_interface_rejected(void) {
     SystemContext ctx;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
+    uint8_t payload[4];
 
     begin_test(&ctx, STATE_DUTY);
 
-    memset(payload, FILL_BYTE, SHORT_PAYLOAD_SIZE);
     payload[0] = 0x01U | 0x08U; /* NAND1 + interface = CAN */
     payload[1] = 0x01U;         /* packet count = 1 (u24) */
     payload[2] = 0x00U;
     payload[3] = 0x00U;
     board_comm_stub_inject_rx(KU_DUMP_MSG_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+                              payload, 4U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
     assert(system_event_queue_get_count() == 0U); /* not accepted */
@@ -194,16 +193,13 @@ static void can_output_interface_rejected(void) {
 /* CMD_STATUS_REQ is answered with a status TS and keeps the mode. */
 static void status_req_allowed_in_dump(void) {
     SystemContext ctx;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
     uint16_t message_id = 0U;
     uint16_t address_to = 0U;
     uint16_t length = 0U;
 
     begin_test(&ctx, STATE_DUMP);
 
-    memset(payload, FILL_BYTE, SHORT_PAYLOAD_SIZE);
-    board_comm_stub_inject_rx(KU_STATUS_REQ_MSG_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+    board_comm_stub_inject_rx(KU_STATUS_REQ_MSG_ID, ADDR_BVS, ADDR_NA, NULL, 0U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
     algorithm_process_events(&ctx);
@@ -218,7 +214,7 @@ static void status_req_allowed_in_dump(void) {
  * mode. */
 static void forbidden_command_rejected_with_err_mode(void) {
     SystemContext ctx;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
+    uint8_t payload[1];
     uint8_t reply[SHORT_PAYLOAD_SIZE];
     uint16_t message_id = 0U;
     uint16_t address_to = 0U;
@@ -226,10 +222,9 @@ static void forbidden_command_rejected_with_err_mode(void) {
 
     begin_test(&ctx, STATE_DUMP);
 
-    memset(payload, FILL_BYTE, SHORT_PAYLOAD_SIZE);
     payload[0] = 0x01U;
     board_comm_stub_inject_rx(KU_TEST_MSG_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+                              payload, 1U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
     algorithm_process_events(&ctx);

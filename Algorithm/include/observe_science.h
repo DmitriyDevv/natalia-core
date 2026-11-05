@@ -24,7 +24,8 @@ typedef enum {
     OBSERVE_EVENTS_OUTSIDE_BELT_BMSAT = 3,
     OBSERVE_EVENTS_OUTSIDE_BELT_B = 4,
     OBSERVE_EVENTS_OUTSIDE_BELTS_BL = 5,
-    OBSERVE_EVENTS_AC1_BELOW_MAX = 6
+    OBSERVE_EVENTS_AC1_BELOW_MAX = 6,
+    OBSERVE_EVENTS_OUTSIDE_BELTS_CURVE = 7
 } ObserveEventsMode;
 
 typedef enum {
@@ -69,6 +70,7 @@ typedef struct {
     bool mcilwain_valid;
     int16_t mcilwain_b;
     int16_t mcilwain_l;
+    bool curve_inside_belt;
     bool ac1_valid;
     bool events_wait_kt;
     bool kt_received;

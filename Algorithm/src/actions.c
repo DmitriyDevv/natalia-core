@@ -120,6 +120,17 @@ static ActionResult disconnect_signal_line(BoardSignalTarget target) {
     return require_ok(board_disconnect_signal_lines(target));
 }
 
+static ActionResult nand_exchange_result(SystemContext* ctx, BoardStatus status) {
+    ActionResult result = require_ok(status);
+
+    if (result == ACTION_ERR_OTHER) {
+        alarm_set(ctx, ALARM_NAND_PR);
+        return ACTION_ALARM;
+    }
+
+    return result;
+}
+
 static ActionResult ensure_masked_alarm_clear(const SystemContext* ctx) {
     if (ctx == NULL) {
         return ACTION_ERR_CONTENT;
@@ -214,7 +225,7 @@ static ActionResult prepare_single_nand_bank(SystemContext* ctx, NandBank bank) 
         nand->is_powered = true;
     }
 
-    result = require_ok(board_nand_connect(bank_id(bank)));
+    result = nand_exchange_result(ctx, board_nand_connect(bank_id(bank)));
     if (result != ACTION_OK) {
         return result;
     }
@@ -955,7 +966,7 @@ ActionResult action_start_erase(SystemContext* ctx, const SystemEvent* event) {
     }
 
     ctx->erase.stage = ERASE_STAGE_START;
-    result = require_ok(board_nand_erase_start(bank_id(bank)));
+    result = nand_exchange_result(ctx, board_nand_erase_start(bank_id(bank)));
     if (result != ACTION_OK) {
         ctx->erase.stage = ERASE_STAGE_FINISH_ALARM;
         cleanup_failed_mode_start(ctx, bank, false);
@@ -1022,7 +1033,7 @@ ActionResult action_start_test(SystemContext* ctx, const SystemEvent* event) {
     {
         uint32_t capacity_packets = 0U;
 
-        result = require_ok(board_nand_get_capacity_packets(bank_id(bank), &capacity_packets));
+        result = nand_exchange_result(ctx, board_nand_get_capacity_packets(bank_id(bank), &capacity_packets));
         if (result != ACTION_OK) {
             ctx->test.stage = TEST_STAGE_FINISH_ALARM;
             cleanup_failed_mode_start(ctx, bank, false);
@@ -1042,7 +1053,7 @@ ActionResult action_start_test(SystemContext* ctx, const SystemEvent* event) {
         return result;
     }
 
-    result = require_ok(board_nand_erase_start(bank_id(bank)));
+    result = nand_exchange_result(ctx, board_nand_erase_start(bank_id(bank)));
     if (result != ACTION_OK) {
         ctx->test.result_status |= TEST_RESULT_STATUS_NAND_ERASE_ERROR;
         ctx->test.operation_failed = true;
@@ -1053,6 +1064,13 @@ ActionResult action_start_test(SystemContext* ctx, const SystemEvent* event) {
 
     ctx->test.stage = TEST_STAGE_ERASE;
     return ACTION_OK;
+}
+
+static ActionResult fail_dump_start(SystemContext* ctx, NandBank bank, ActionResult result) {
+    ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
+    cleanup_failed_mode_start(ctx, bank, false);
+    (void)board_data_link_close();
+    return result;
 }
 
 ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
@@ -1141,37 +1159,27 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
 
     result = prepare_single_nand_bank(ctx, bank);
     if (result != ACTION_OK) {
-        ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-        cleanup_failed_mode_start(ctx, bank, false);
-        return result;
+        return fail_dump_start(ctx, bank, result);
     }
 
     result = map_result(ctx, nand_map_load(bank_id(bank)));
     if (result != ACTION_OK) {
-        ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-        cleanup_failed_mode_start(ctx, bank, false);
-        return result;
+        return fail_dump_start(ctx, bank, result);
     }
 
     if (event->command.dump.dump_all) {
         packet_count = 0U;
         result = stored_packet_count(ctx, bank, &packet_count);
         if (result != ACTION_OK) {
-            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-            cleanup_failed_mode_start(ctx, bank, false);
-            return result;
+            return fail_dump_start(ctx, bank, result);
         }
 
         if (packet_count == 0U) {
-            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-            cleanup_failed_mode_start(ctx, bank, false);
-            return ACTION_ERR_CONTENT;
+            return fail_dump_start(ctx, bank, ACTION_ERR_CONTENT);
         }
 
         if (packet_count > (UINT32_MAX / DUMP_MODE_PACKET_SIZE)) {
-            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-            cleanup_failed_mode_start(ctx, bank, false);
-            return ACTION_ERR_CONTENT;
+            return fail_dump_start(ctx, bank, ACTION_ERR_CONTENT);
         }
 
         ctx->dump.start_address = 0U;
@@ -1179,40 +1187,30 @@ ActionResult action_start_dump(SystemContext* ctx, const SystemEvent* event) {
         start_packet = 0U;
     } else {
         if (event->command.dump.size == 0U) {
-            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-            cleanup_failed_mode_start(ctx, bank, false);
-            return ACTION_ERR_CONTENT;
+            return fail_dump_start(ctx, bank, ACTION_ERR_CONTENT);
         }
 
         if ((event->command.dump.size % DUMP_MODE_PACKET_SIZE) != 0U) {
-            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-            cleanup_failed_mode_start(ctx, bank, false);
-            return ACTION_ERR_CONTENT;
+            return fail_dump_start(ctx, bank, ACTION_ERR_CONTENT);
         }
 
         start_packet = event->command.dump.start_address / DUMP_MODE_PACKET_SIZE;
         packet_count = event->command.dump.size / DUMP_MODE_PACKET_SIZE;
 
         if (packet_count == 0U) {
-            ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-            cleanup_failed_mode_start(ctx, bank, false);
-            return ACTION_ERR_CONTENT;
+            return fail_dump_start(ctx, bank, ACTION_ERR_CONTENT);
         }
     }
 
     if (start_packet > (UINT32_MAX - packet_count)) {
-        ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-        cleanup_failed_mode_start(ctx, bank, false);
-        return ACTION_ERR_CONTENT;
+        return fail_dump_start(ctx, bank, ACTION_ERR_CONTENT);
     }
 
     read_limit_packets = start_packet + packet_count;
 
-    result = require_ok(board_nand_open_read(bank_id(bank), read_limit_packets));
+    result = nand_exchange_result(ctx, board_nand_open_read(bank_id(bank), read_limit_packets));
     if (result != ACTION_OK) {
-        ctx->dump.stage = DUMP_STAGE_FINISH_ALARM;
-        cleanup_failed_mode_start(ctx, bank, false);
-        return result;
+        return fail_dump_start(ctx, bank, result);
     }
 
     ctx->dump.stage = DUMP_STAGE_READ;
@@ -1268,6 +1266,12 @@ ActionResult action_start_shutdown(SystemContext* ctx) {
     remember_first_error(&first_power_off_error, result);
 
     result = disconnect_signal_line(BOARD_SIGNAL_NAND2);
+    remember_first_error(&first_power_off_error, result);
+
+    result = disconnect_signal_line(BOARD_SIGNAL_MRAM);
+    remember_first_error(&first_power_off_error, result);
+
+    result = disconnect_signal_line(BOARD_SIGNAL_I2C);
     remember_first_error(&first_power_off_error, result);
 
     if (first_power_off_error != ACTION_OK) {

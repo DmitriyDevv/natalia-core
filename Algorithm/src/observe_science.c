@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "belt_curve.h"
+
 _Static_assert(sizeof(float) == 4U, "KT floats are 32-bit IEEE 754");
 
 #define OBSERVE_SCIENCE_AMP_BITS             16U
@@ -103,6 +105,9 @@ static bool observe_science_events_allowed(const ObserveScience* science) {
     case OBSERVE_EVENTS_AC1_BELOW_MAX:
         return science->ac1_valid && (science->last_ac1 < limits->ac1_rate_max);
 
+    case OBSERVE_EVENTS_OUTSIDE_BELTS_CURVE:
+        return science->mcilwain_valid && !science->curve_inside_belt;
+
     default:
         return false;
     }
@@ -190,7 +195,7 @@ bool observe_science_decode_params(uint16_t raw_params, ObserveScienceParams* pa
         return false;
     }
 
-    if ((events_mode > (uint16_t)OBSERVE_EVENTS_AC1_BELOW_MAX) || (nmax_code > 5U) ||
+    if ((nmax_code > 5U) ||
         (spectrum_mode > (uint16_t)OBSERVE_SPECTRUM_2) || (bins_code > 4U) ||
         ((raw_params & (1U << 11)) != 0U)) {
         return false;
@@ -440,6 +445,7 @@ ObserveScienceStatus observe_science_on_mcilwain(ObserveScience* science, NiStre
 
     science->mcilwain_l = (int16_t)observe_science_read_le_u16(&kt[OBSERVE_SCIENCE_KT_L_OFFSET]);
     science->mcilwain_b = (int16_t)observe_science_read_le_u16(&kt[OBSERVE_SCIENCE_KT_B_OFFSET]);
+    science->curve_inside_belt = belt_curve_inside(science->mcilwain_l, science->mcilwain_b);
     science->mcilwain_valid = true;
     science->kt_received = true;
 

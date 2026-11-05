@@ -1,0 +1,138 @@
+{
+  "version": 2,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "flight",
+      "displayName": "Flight firmware",
+      "description": "Flight build: no debug log, all board drivers, watchdog, LTO",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/flight",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/Toolchain_STM32L4.cmake",
+        "CMAKE_BUILD_TYPE": "Release",
+        "NATALIA_BUILD_TESTS": "OFF",
+        "NATALIA_USE_BOARD_STUBS": "OFF",
+        "NATALIA_FIRMWARE_MAIN": "main.c",
+        "NATALIA_LOG_BACKEND": "NONE",
+        "NATALIA_ENABLE_DETECTOR_PROTO_LOG": "OFF",
+        "NATALIA_ENABLE_BOARD_TEST_HOOKS": "OFF",
+        "NATALIA_ENABLE_PED_INJECT": "OFF",
+        "NATALIA_ENABLE_WATCHDOG": "ON",
+        "NATALIA_ENABLE_LTO": "ON",
+        "NATALIA_OBSERVE_EVENTS_WAIT_KT": "ON",
+        "NATALIA_ENABLE_UNICAN_DRIVER": "ON",
+        "NATALIA_ENABLE_PED_REG_DRIVER": "ON",
+        "NATALIA_ENABLE_SPI_DRIVER": "ON",
+        "NATALIA_ENABLE_MRAM_DRIVER": "ON",
+        "NATALIA_ENABLE_NAND_DRIVER": "ON",
+        "NATALIA_ENABLE_FTDI_DRIVER": "ON",
+        "NATALIA_ENABLE_USB_DEVICE_DRIVER": "OFF",
+        "NATALIA_ENABLE_I2C_DRIVER": "ON",
+        "NATALIA_ENABLE_INA219_DRIVER": "ON",
+        "NATALIA_ENABLE_TMP112_DRIVER": "ON",
+        "NATALIA_ENABLE_ADC_DRIVER": "ON",
+        "NATALIA_ENABLE_TC1047_DRIVER": "ON",
+        "NATALIA_ADC_USE_VREFBUF": "OFF",
+        "NATALIA_NAND_POWER_SWITCH": "FPF2101",
+        "NATALIA_NAND_CACHE_READ_MODE": "4",
+        "NATALIA_NAND_PROGRAM_LOAD_MODE": "4",
+        "NATALIA_QSPI_TARGET_HZ": "40000000",
+        "NATALIA_QSPI_SAMPLE_SHIFT": "OFF",
+        "NATALIA_QSPI_DMA_READ": "ON",
+        "NATALIA_QSPI_DMA_WRITE": "ON",
+        "NATALIA_QSPI_DMA_AUTO_MIN_SIZE": "16",
+        "NATALIA_SPI_DMA_READ": "ON",
+        "NATALIA_SPI_DMA_WRITE": "ON",
+        "NATALIA_SPI_DMA_AUTO_MIN_SIZE": "16",
+        "NATALIA_SPI_MRAM_BR": "0"
+      }
+    },
+    {
+      "name": "bench",
+      "inherits": "flight",
+      "displayName": "Bench firmware (CAN log)",
+      "description": "Flight build with the debug log on CAN (ID 0x7DB) for test stands",
+      "binaryDir": "${sourceDir}/build/bench",
+      "cacheVariables": {
+        "NATALIA_LOG_BACKEND": "CAN"
+      }
+    },
+    {
+      "name": "host-tests",
+      "displayName": "Host tests",
+      "description": "Algorithm on the PC with the Board_API stub",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/host-tests",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "NATALIA_BUILD_TESTS": "ON",
+        "NATALIA_USE_BOARD_STUBS": "ON"
+      }
+    },
+    {
+      "name": "ped-nucleo",
+      "displayName": "PED stand on NUCLEO-L496ZG",
+      "description": "tests/firmware/ped_nucleo_test.c: PED_REG only, log on LPUART1 (ST-LINK VCP) at 921600",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/ped-nucleo",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/Toolchain_STM32L4.cmake",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "NATALIA_BUILD_TESTS": "OFF",
+        "NATALIA_USE_BOARD_STUBS": "OFF",
+        "NATALIA_FIRMWARE_MAIN": "tests/firmware/ped_nucleo_test.c",
+        "NATALIA_LOG_BACKEND": "LPUART1",
+        "NATALIA_LPUART1_BAUDRATE": "921600",
+        "NATALIA_ENABLE_PED_REG_DRIVER": "ON",
+        "NATALIA_ENABLE_PED_INJECT": "OFF",
+        "NATALIA_ENABLE_BOARD_TEST_HOOKS": "OFF",
+        "NATALIA_ENABLE_DETECTOR_PROTO_LOG": "OFF",
+        "NATALIA_ENABLE_WATCHDOG": "OFF",
+        "NATALIA_ENABLE_UNICAN_DRIVER": "OFF",
+        "NATALIA_ENABLE_SPI_DRIVER": "OFF",
+        "NATALIA_ENABLE_MRAM_DRIVER": "OFF",
+        "NATALIA_ENABLE_NAND_DRIVER": "OFF",
+        "NATALIA_ENABLE_FTDI_DRIVER": "OFF",
+        "NATALIA_ENABLE_USB_DEVICE_DRIVER": "OFF",
+        "NATALIA_ENABLE_I2C_DRIVER": "OFF",
+        "NATALIA_ENABLE_INA219_DRIVER": "OFF",
+        "NATALIA_ENABLE_TMP112_DRIVER": "OFF",
+        "NATALIA_ENABLE_ADC_DRIVER": "OFF",
+        "NATALIA_ENABLE_TC1047_DRIVER": "OFF",
+        "NATALIA_NAND_POWER_SWITCH": "NONE"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "flight",
+      "configurePreset": "flight"
+    },
+    {
+      "name": "bench",
+      "configurePreset": "bench"
+    },
+    {
+      "name": "host-tests",
+      "configurePreset": "host-tests"
+    },
+    {
+      "name": "ped-nucleo",
+      "configurePreset": "ped-nucleo"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "host-tests",
+      "configurePreset": "host-tests",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

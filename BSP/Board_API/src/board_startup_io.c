@@ -60,8 +60,6 @@
 #define BOARD_STARTUP_CAN_PINS_DRIVEN 0
 #endif
 
-#if (BOARD_STARTUP_CAN_PINS_DRIVEN || BOARD_STARTUP_PED_ENABLED || BOARD_STARTUP_FTDI_ENABLED || \
-     (BOARD_STARTUP_NAND_ENABLED && (NATALIA_NAND_POWER_SWITCH_ID != 0)))
 static BoardStatus configure_output(BoardPinId pin_id, GpioLevel level) {
     static const GpioConfig output_low_config = {
         .mode = GPIO_MODE_OUTPUT,
@@ -85,7 +83,6 @@ static BoardStatus configure_output(BoardPinId pin_id, GpioLevel level) {
 
     return gpio_configure(pin_id, &output_low_config);
 }
-#endif
 
 #if (BOARD_STARTUP_CAN_PINS_DRIVEN || BOARD_STARTUP_USB_ENABLED || BOARD_STARTUP_FTDI_ENABLED)
 static BoardStatus configure_input(BoardPinId pin_id) {
@@ -173,19 +170,20 @@ static BoardStatus configure_nand_control(void) {
 #endif
 }
 
+static BoardStatus configure_can2_listen_only(void) {
+    BoardStatus status;
+
+    status = configure_output(BOARD_PIN_PU_CAN2_S, GPIO_LEVEL_HIGH);
+    if (status != BOARD_OK) {
+        return status;
+    }
+
+    return configure_output(BOARD_PIN_PU_CAN2_SHDN, GPIO_LEVEL_LOW);
+}
+
 static BoardStatus configure_can_control(void) {
 #if (NATALIA_LOG_BACKEND == NATALIA_LOG_BACKEND_CAN)
-    /*
-     * CAN1 is owned by the CAN log backend, whose can1_init() runs before this
-     * startup sweep and configures the CAN1 TX/RX alternate function and the
-     * transceiver control lines. Do not disturb CAN1 here; leave CAN2 disconnected.
-     */
-    static const BoardPinId can2_pins[] = {
-        BOARD_PIN_PU_CAN2_SHDN,
-        BOARD_PIN_PU_CAN2_S
-    };
-
-    return disconnect_pins(can2_pins, ARRAY_SIZE(can2_pins));
+    return configure_can2_listen_only();
 #elif BOARD_STARTUP_CAN_ENABLED
     BoardStatus status;
 
@@ -209,23 +207,22 @@ static BoardStatus configure_can_control(void) {
         return status;
     }
 
-    status = configure_output(BOARD_PIN_PU_CAN2_SHDN, GPIO_LEVEL_HIGH);
+    return configure_can2_listen_only();
+#else
+    static const BoardPinId can1_pins[] = {
+        BOARD_PIN_PU_CAN1_SHDN,
+        BOARD_PIN_PU_CAN1_S,
+        BOARD_PIN_CAN1_TX,
+        BOARD_PIN_CAN1_RX
+    };
+    BoardStatus status;
+
+    status = disconnect_pins(can1_pins, ARRAY_SIZE(can1_pins));
     if (status != BOARD_OK) {
         return status;
     }
 
-    return configure_output(BOARD_PIN_PU_CAN2_S, GPIO_LEVEL_LOW);
-#else
-    static const BoardPinId can_pins[] = {
-        BOARD_PIN_PU_CAN1_SHDN,
-        BOARD_PIN_PU_CAN1_S,
-        BOARD_PIN_CAN1_TX,
-        BOARD_PIN_CAN1_RX,
-        BOARD_PIN_PU_CAN2_SHDN,
-        BOARD_PIN_PU_CAN2_S
-    };
-
-    return disconnect_pins(can_pins, ARRAY_SIZE(can_pins));
+    return configure_can2_listen_only();
 #endif
 }
 

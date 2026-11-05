@@ -165,6 +165,7 @@ cmake --preset host-tests && cmake --build --preset host-tests && ctest --preset
 | Флаг                                  | Назначение                                                                                                     |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `NATALIA_LOG_BACKEND` (`NONE`)            | Бэкенд журнала:`NONE`, `LPUART1`, `USART2`, `FTDI`, `CAN`. В полётной сборке журнала нет (`NONE`).          |
+| `NATALIA_LPUART1_BAUDRATE` (`115200`)     | Скорость журнала LPUART1 (ядро LPUART от HSI16, до 5 333 333). Стенд ПЭД — 921600.                           |
 | `NATALIA_ENABLE_DETECTOR_PROTO_LOG` (OFF) | Машинно-читаемый вывод`DSTLOG` для проверки UniCAN. Только для прошивки. |
 
 ### Драйверы (по умолчанию все OFF)
@@ -241,6 +242,7 @@ cmake --build cmake-build-debug --target natalia_firmware -j 18
 | `nand_modes_test.c`                      | Режимы DUMP / ERASE / TEST / восстановление из ALARM основной прошивки, команды событиями |
 | `observe_test.c`                         | Режим OBSERVE основной прошивки без ПЭД: события от TIM7 через `ped_reg_inject_event` (нужно `-DNATALIA_ENABLE_PED_INJECT=ON`), затем чтение банка и проверка пакетов, форматов и непрерывности событий |
 | `ni_bench_test.c`                        | Время операций НИ (CRC, форматы, поток) и всего пути до NAND при Nmax = 1/10/100 |
+| `ped_nucleo_test.c`                      | Настоящая ПЭД на NUCLEO-L496ZG: только PED_REG, журнал LPUART1 (ST-LINK VCP), команды с ПК, гистограмма Amp_D; пресет `ped-nucleo`, приём `tools/ped_monitor.py`, подключение и порядок — `docs/PED_NUCLEO_STAND.md` |
 
 Каждому main'у нужно включить соответствующие драйверы через `-D...=ON` и выбрать
 подходящий `NATALIA_LOG_BACKEND` (на стенде обычно `CAN` — вывод в

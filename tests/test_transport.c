@@ -20,6 +20,7 @@
 #define KU_SET_DEST_ID_MSG_ID  (0x0A61U)
 #define KU_SET_DEVICE_ID_MSG_ID (0x0A62U)
 #define KU_OBSERVE_START_MSG_ID (0x0F03U)
+#define KU_ERASE_MSG_ID        (0x0F08U)
 #define TS_ACK_MSG_ID          (0x0D01U)
 #define TS_TELEMETRY_MSG_ID    (0x0D02U)
 #define TS_TEST_RESULT_MSG_ID  (0x0D03U)
@@ -33,6 +34,9 @@
 #define ADDR_OTHER           (0x03U)
 #define CAN_CTRL_DEST_SENDER (0x0001U)
 #define CAN_CTRL_IGN_SPUTNIK (0x0002U)
+#define ACK_OK               (0x00U)
+#define ACK_ERR_CONTENT      (0x05U)
+#define TS_VERSION_SIZE      (3U)
 
 static void make_fill_payload(uint8_t* payload) {
     memset(payload, FILL_BYTE, SHORT_PAYLOAD_SIZE);
@@ -41,17 +45,14 @@ static void make_fill_payload(uint8_t* payload) {
 static void known_command_is_parsed_and_enqueued(void) {
     SystemContext ctx;
     SystemEvent event;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
 
     memset(&ctx, 0, sizeof(ctx));
     board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
-    make_fill_payload(payload);
 
-    board_comm_stub_inject_rx(KU_STATUS_REQ_MSG_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+    board_comm_stub_inject_rx(KU_STATUS_REQ_MSG_ID, ADDR_BVS, ADDR_NA, NULL, 0U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
 
@@ -61,29 +62,51 @@ static void known_command_is_parsed_and_enqueued(void) {
     assert(event.msg_id == KU_STATUS_REQ_MSG_ID);
 }
 
-/* Zero-length version request arrives as a 6-byte frame; the payload must be
- * ignored (not required to be fill) and the command routed to VERSION_REQ. */
-static void version_request_ignores_payload_and_enqueues(void) {
+static void expect_content_error_ack(SystemContext* ctx, uint16_t command_id) {
+    uint8_t reply[SHORT_PAYLOAD_SIZE];
+    uint16_t message_id = 0U;
+    uint16_t length = 0U;
+
+    assert(transport_poll(ctx, 0U) == BOARD_OK);
+    assert(transport_poll(ctx, 0U) == BOARD_OK);
+    assert(system_event_queue_get_count() == 0U);
+    assert(board_comm_stub_last_tx(&message_id, NULL, reply, sizeof(reply), &length));
+    assert(message_id == TS_ACK_MSG_ID);
+    assert(reply[0] == (uint8_t)(command_id & 0xFFU));
+    assert(reply[1] == (uint8_t)(command_id >> 8U));
+    assert(reply[2] == ACK_ERR_CONTENT);
+}
+
+/* CAN v2.1 §2: KU lengths are exact. A zero-length KU with data and a v2-style
+ * short KU padded to 6 bytes with AAh are rejected with ACK 05h. */
+static void short_command_length_must_match_v2_1(void) {
     SystemContext ctx;
-    SystemEvent event;
     uint8_t payload[SHORT_PAYLOAD_SIZE];
 
     memset(&ctx, 0, sizeof(ctx));
+    ctx.state = STATE_DUTY;
     board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
-    memset(payload, 0x5AU, SHORT_PAYLOAD_SIZE); /* not fill */
+    make_fill_payload(payload);
 
     board_comm_stub_inject_rx(KU_VERSION_REQ_MSG_ID, ADDR_BVS, ADDR_NA,
                               payload, SHORT_PAYLOAD_SIZE);
+    expect_content_error_ack(&ctx, KU_VERSION_REQ_MSG_ID);
 
+    payload[0] = 0x01U; /* NAND1, padded to 6 bytes as in v2 */
+    board_comm_stub_inject_rx(KU_ERASE_MSG_ID, ADDR_BVS, ADDR_NA,
+                              payload, SHORT_PAYLOAD_SIZE);
+    expect_content_error_ack(&ctx, KU_ERASE_MSG_ID);
+
+    board_comm_stub_inject_rx(KU_SET_DEST_ID_MSG_ID, ADDR_BVS, ADDR_NA,
+                              payload, SHORT_PAYLOAD_SIZE);
+    expect_content_error_ack(&ctx, KU_SET_DEST_ID_MSG_ID);
+
+    board_comm_stub_inject_rx(KU_ERASE_MSG_ID, ADDR_BVS, ADDR_NA, payload, 1U);
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
-
     assert(system_event_queue_get_count() == 1U);
-    assert(system_event_queue_pop(&event));
-    assert(event.type == EVENT_CMD_VERSION_REQ);
-    assert(event.msg_id == KU_VERSION_REQ_MSG_ID);
 }
 
 /* End to end in DUTY: version request is acked and answered with TS 0xFFE1
@@ -91,7 +114,6 @@ static void version_request_ignores_payload_and_enqueues(void) {
 static void version_request_replies_with_version_ts(void) {
     SystemContext ctx;
     SystemEvent event;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
     uint8_t got[SHORT_PAYLOAD_SIZE];
     uint16_t message_id = 0U;
     uint16_t address_to = 0U;
@@ -104,10 +126,8 @@ static void version_request_replies_with_version_ts(void) {
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
-    make_fill_payload(payload);
 
-    board_comm_stub_inject_rx(KU_VERSION_REQ_MSG_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+    board_comm_stub_inject_rx(KU_VERSION_REQ_MSG_ID, ADDR_BVS, ADDR_NA, NULL, 0U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
     assert(system_event_queue_pop(&event));
@@ -120,7 +140,7 @@ static void version_request_replies_with_version_ts(void) {
     assert(board_comm_stub_last_tx(&message_id, &address_to, got, sizeof(got),
                                    &length));
     assert(message_id == TS_VERSION_MSG_ID);
-    assert(length == SHORT_PAYLOAD_SIZE);
+    assert(length == TS_VERSION_SIZE);
     assert(got[0] == 255U);
     assert(got[1] == 255U);
     assert(got[2] == 255U);
@@ -132,7 +152,7 @@ static void set_device_id_persists_to_mram(void) {
     SystemContext ctx;
     MramStoreConfig baseline;
     MramStoreConfig loaded;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
+    uint8_t payload[2];
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_DUTY;
@@ -148,11 +168,9 @@ static void set_device_id_persists_to_mram(void) {
     assert(mram_store_save_config(&baseline) == BOARD_OK);
     transport_apply_stored_addresses(baseline.device_id, baseline.destination_id);
 
-    make_fill_payload(payload);
     payload[0] = 0x42U;
     payload[1] = 0x00U; /* device_id = 0x0042 */
-    board_comm_stub_inject_rx(KU_SET_DEVICE_ID_MSG_ID, ADDR_BVS, 0x00AAU,
-                              payload, SHORT_PAYLOAD_SIZE);
+    board_comm_stub_inject_rx(KU_SET_DEVICE_ID_MSG_ID, ADDR_BVS, 0x00AAU, payload, 2U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
 
@@ -169,7 +187,7 @@ static void set_device_id_in_shutdown_is_ram_only(void) {
     SystemContext ctx;
     MramStoreConfig baseline;
     MramStoreConfig loaded;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
+    uint8_t payload[2];
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_SHUTDOWN;
@@ -185,17 +203,94 @@ static void set_device_id_in_shutdown_is_ram_only(void) {
     assert(mram_store_save_config(&baseline) == BOARD_OK);
     transport_apply_stored_addresses(baseline.device_id, baseline.destination_id);
 
-    make_fill_payload(payload);
     payload[0] = 0x42U;
     payload[1] = 0x00U;
-    board_comm_stub_inject_rx(KU_SET_DEVICE_ID_MSG_ID, ADDR_BVS, 0x00AAU,
-                              payload, SHORT_PAYLOAD_SIZE);
+    board_comm_stub_inject_rx(KU_SET_DEVICE_ID_MSG_ID, ADDR_BVS, 0x00AAU, payload, 2U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
 
     memset(&loaded, 0, sizeof(loaded));
     assert(mram_store_load_config(&loaded) == BOARD_OK);
     assert(loaded.device_id == 0x00AAU); /* unchanged in MRAM */
+}
+
+static uint8_t inject_address_command(SystemContext* ctx, uint16_t command_id,
+                                      uint16_t address_to, uint16_t value) {
+    uint8_t payload[2];
+    uint8_t reply[SHORT_PAYLOAD_SIZE];
+    uint16_t message_id = 0U;
+
+    payload[0] = (uint8_t)(value & 0xFFU);
+    payload[1] = (uint8_t)(value >> 8U);
+    board_comm_stub_inject_rx(command_id, ADDR_BVS, address_to, payload, 2U);
+    assert(transport_poll(ctx, 0U) == BOARD_OK);
+    assert(transport_poll(ctx, 0U) == BOARD_OK);
+    assert(board_comm_stub_last_tx(&message_id, NULL, reply, sizeof(reply), NULL));
+    assert(message_id == TS_ACK_MSG_ID);
+    return reply[2];
+}
+
+/* UniCAN 29-bit identifiers carry 14-bit addresses: Destination/Device ID
+ * above 3FFFh is rejected with ACK 05h and neither RAM nor MRAM changes. */
+static void address_above_14_bits_is_rejected(void) {
+    SystemContext ctx;
+    MramStoreConfig baseline;
+    MramStoreConfig loaded;
+    uint16_t message_id = 0U;
+    uint16_t address_to = 0U;
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.state = STATE_DUTY;
+    board_stub_reset_all();
+    system_event_queue_init();
+    board_comm_stub_reset();
+    transport_reset();
+
+    memset(&baseline, 0, sizeof(baseline));
+    baseline.device_id = ADDR_NA;
+    baseline.destination_id = ADDR_BVS;
+    assert(mram_store_save_config(&baseline) == BOARD_OK);
+
+    assert(inject_address_command(&ctx, KU_SET_DEST_ID_MSG_ID, ADDR_NA, 0x4000U) ==
+           ACK_ERR_CONTENT);
+    assert(inject_address_command(&ctx, KU_SET_DEVICE_ID_MSG_ID, ADDR_NA, 0xFFFFU) ==
+           ACK_ERR_CONTENT);
+
+    memset(&loaded, 0, sizeof(loaded));
+    assert(mram_store_load_config(&loaded) == BOARD_OK);
+    assert(loaded.device_id == ADDR_NA);
+    assert(loaded.destination_id == ADDR_BVS);
+    assert(board_comm_stub_last_tx(&message_id, &address_to, NULL, 0U, NULL));
+    assert(address_to == ADDR_BVS);
+
+    assert(inject_address_command(&ctx, KU_SET_DEVICE_ID_MSG_ID, ADDR_NA, 0x3FFFU) ==
+           ACK_OK);
+    assert(mram_store_load_config(&loaded) == BOARD_OK);
+    assert(loaded.device_id == 0x3FFFU);
+}
+
+/* An out-of-range address already in MRAM is not applied at boot. */
+static void stored_address_above_14_bits_is_ignored(void) {
+    SystemContext ctx;
+    uint16_t message_id = 0U;
+    uint16_t address_to = 0U;
+
+    memset(&ctx, 0, sizeof(ctx));
+    board_stub_reset_all();
+    system_event_queue_init();
+    board_comm_stub_reset();
+    transport_reset();
+
+    transport_apply_stored_addresses(0x4000U, 0x8005U);
+    board_comm_stub_inject_rx(KU_STATUS_REQ_MSG_ID, ADDR_BVS, ADDR_NA, NULL, 0U);
+    assert(transport_poll(&ctx, 0U) == BOARD_OK);
+    assert(system_event_queue_get_count() == 1U);
+
+    board_comm_stub_inject_rx(UNKNOWN_MSG_ID, ADDR_BVS, ADDR_NA, NULL, 0U);
+    assert(transport_poll(&ctx, 0U) == BOARD_OK);
+    assert(transport_poll(&ctx, 0U) == BOARD_OK);
+    assert(board_comm_stub_last_tx(&message_id, &address_to, NULL, 0U, NULL));
+    assert(address_to == ADDR_BVS);
 }
 
 /* Boot load: stored Destination ID is applied so replies target it. */
@@ -237,17 +332,14 @@ static void stored_addresses_applied_on_load(void) {
 
 static void message_for_other_node_is_dropped(void) {
     SystemContext ctx;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
 
     memset(&ctx, 0, sizeof(ctx));
     board_stub_reset_all();
     system_event_queue_init();
     board_comm_stub_reset();
     transport_reset();
-    make_fill_payload(payload);
 
-    board_comm_stub_inject_rx(KU_STATUS_REQ_MSG_ID, ADDR_BVS, ADDR_OTHER,
-                              payload, SHORT_PAYLOAD_SIZE);
+    board_comm_stub_inject_rx(KU_STATUS_REQ_MSG_ID, ADDR_BVS, ADDR_OTHER, NULL, 0U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
     assert(system_event_queue_get_count() == 0U);
@@ -265,8 +357,7 @@ static void sputniks_time_ignored_when_can_control_bit_set(void) {
     transport_reset();
     make_fill_payload(payload);
 
-    board_comm_stub_inject_rx(KU_SPUTNIKS_TIME_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+    board_comm_stub_inject_rx(KU_SPUTNIKS_TIME_ID, ADDR_BVS, ADDR_NA, payload, 5U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
     assert(system_event_queue_get_count() == 0U);
@@ -286,8 +377,7 @@ static void sputniks_time_processed_when_can_control_bit_clear(void) {
     transport_reset();
     make_fill_payload(payload);
 
-    board_comm_stub_inject_rx(KU_SPUTNIKS_TIME_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+    board_comm_stub_inject_rx(KU_SPUTNIKS_TIME_ID, ADDR_BVS, ADDR_NA, payload, 5U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
     assert(system_event_queue_get_count() == 1U);
@@ -348,7 +438,7 @@ static void reply_targets_stored_address_when_can_control_bit_clear(void) {
 static void test_result_request_decodes_bank_and_mram_copy(void) {
     SystemContext ctx;
     SystemEvent event;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
+    uint8_t payload[1];
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_DUTY;
@@ -358,11 +448,9 @@ static void test_result_request_decodes_bank_and_mram_copy(void) {
     transport_reset();
 
     /* KU 000Ah hardware config: NAND2 (bits 0-1 = 2), MRAM copy 2 (bits 2-3 = 2). */
-    memset(payload, FILL_BYTE, SHORT_PAYLOAD_SIZE);
     payload[0] = 0x02U | (0x02U << 2U);
 
-    board_comm_stub_inject_rx(KU_TEST_RESULT_MSG_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+    board_comm_stub_inject_rx(KU_TEST_RESULT_MSG_ID, ADDR_BVS, ADDR_NA, payload, 1U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
     assert(system_event_queue_get_count() == 1U);
@@ -424,7 +512,7 @@ static void test_result_action_sends_long_ts_0203(void) {
 
 static void test_result_request_rejects_invalid_mram_copy(void) {
     SystemContext ctx;
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
+    uint8_t payload[1];
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.state = STATE_DUTY;
@@ -434,11 +522,9 @@ static void test_result_request_rejects_invalid_mram_copy(void) {
     transport_reset();
 
     /* MRAM copy field (bits 2-3) = 0 is invalid; command must be ignored. */
-    memset(payload, FILL_BYTE, SHORT_PAYLOAD_SIZE);
     payload[0] = 0x01U;
 
-    board_comm_stub_inject_rx(KU_TEST_RESULT_MSG_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+    board_comm_stub_inject_rx(KU_TEST_RESULT_MSG_ID, ADDR_BVS, ADDR_NA, payload, 1U);
 
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
     assert(system_event_queue_get_count() == 0U);
@@ -466,17 +552,14 @@ static void test_result_invalid_bank_replies_err_other(void) {
 }
 
 static void inject_observe_start(uint16_t observe_params) {
-    uint8_t payload[SHORT_PAYLOAD_SIZE];
+    uint8_t payload[5];
 
-    memset(payload, FILL_BYTE, SHORT_PAYLOAD_SIZE);
     payload[0] = 0x01U; /* bank NAND1, all other config bits 0 */
     payload[1] = (uint8_t)(observe_params & 0xFFU);
     payload[2] = (uint8_t)((observe_params >> 8U) & 0xFFU);
     payload[3] = 0x00U; /* trigger config */
     payload[4] = 0x00U;
-    /* payload[5] stays fill */
-    board_comm_stub_inject_rx(KU_OBSERVE_START_MSG_ID, ADDR_BVS, ADDR_NA,
-                              payload, SHORT_PAYLOAD_SIZE);
+    board_comm_stub_inject_rx(KU_OBSERVE_START_MSG_ID, ADDR_BVS, ADDR_NA, payload, 5U);
 }
 
 /* §9.4 consistency rules for the observe parameter word. */
@@ -501,6 +584,24 @@ static void observe_params_validation(void) {
     board_comm_stub_reset();
     transport_reset();
     inject_observe_start(0x0040U);
+    assert(transport_poll(&ctx, 0U) == BOARD_OK);
+    assert(system_event_queue_get_count() == 0U);
+
+    /* valid: mode 7 (outside belts by the B_lim(L) curve), count 1 */
+    board_stub_reset_all();
+    system_event_queue_init();
+    board_comm_stub_reset();
+    transport_reset();
+    inject_observe_start(0x000FU);
+    assert(transport_poll(&ctx, 0U) == BOARD_OK);
+    assert(system_event_queue_get_count() == 1U);
+
+    /* invalid: mode 7 but event count = 0 */
+    board_stub_reset_all();
+    system_event_queue_init();
+    board_comm_stub_reset();
+    transport_reset();
+    inject_observe_start(0x0007U);
     assert(transport_poll(&ctx, 0U) == BOARD_OK);
     assert(system_event_queue_get_count() == 0U);
 
@@ -596,11 +697,13 @@ int main(void) {
     test_result_invalid_bank_replies_err_other();
     observe_params_validation();
     telemetry_frame_0d02();
-    version_request_ignores_payload_and_enqueues();
+    short_command_length_must_match_v2_1();
     version_request_replies_with_version_ts();
     set_device_id_persists_to_mram();
     set_device_id_in_shutdown_is_ram_only();
     stored_addresses_applied_on_load();
+    address_above_14_bits_is_rejected();
+    stored_address_above_14_bits_is_ignored();
     message_for_other_node_is_dropped();
     sputniks_time_ignored_when_can_control_bit_set();
     sputniks_time_processed_when_can_control_bit_clear();
